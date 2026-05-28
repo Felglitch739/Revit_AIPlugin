@@ -1,0 +1,789 @@
+# Contexto confirmado ✅
+
+Entendido al 100%. Aquí el resumen de lo que tenemos y el plan de ataque para la **Fase 3**.
+
+---
+
+## El problema arquitectónico central
+
+Antes de escribir una sola línea, hay que entender el reto principal:
+
+```
+Hilo de la IA (async)  ──────────►  NO puede tocar la Revit API directamente
+Hilo principal de Revit  ◄────────  Es el ÚNICO que puede ejecutar comandos
+```
+
+Revit es de un solo hilo para su API. Si llamas `doc.Create.NewWall(...)` desde un hilo async, Revit lanza una excepción o simplemente corrompe el modelo. La solución oficial es `IExternalEventHandler` + `ExternalEvent`.
+
+---
+
+## Arquitectura propuesta (4 capas)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  CAPA 1: Tools Definition (JSON Schema para Groq)   │
+│  Define qué puede hacer la IA                        │
+├─────────────────────────────────────────────────────┤
+│  CAPA 2: GroqService  (LlamarIA actualizado)        │
+│  Detecta si la IA quiere llamar una tool            │
+├─────────────────────────────────────────────────────┤
+│  CAPA 3: RevitCommandDispatcher                     │
+│  Traduce tool_call → IExternalEventHandler          │
+├─────────────────────────────────────────────────────┤
+│  CAPA 4: RevitTools (CrearMuro, LeerElementos...)   │
+│  Implementación real con Revit API                  │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Estructura de archivos que vamos a crear
+
+```
+RevitAIPlugin/
+├── Commands/
+│   └── CommandAbrirChat.cs          ← YA EXISTE (modificar para pasar UIApplication)
+├── UI/
+│   └── MainWindow.xaml.cs           ← YA EXISTE (pequeño ajuste)
+├── AI/
+│   ├── GroqService.cs               ← NUEVO: lógica de API + tool calling
+│   └── ToolDefinitions.cs           ← NUEVO: esquemas JSON de las tools
+├── Revit/
+│   ├── RevitCommandDispatcher.cs    ← NUEVO: puente IA ↔ Revit API
+│   └── Tools/
+│       ├── CrearMuroTool.cs         ← NUEVO
+│       └── LeerElementosTool.cs     ← NUEVO
+└── App.cs                           ← YA EXISTE (modificar para exponer UIApp)
+```
+
+---
+
+## Paso 1 — `App.cs` (modificar para exponer la UIApplication)
+
+Este es el cambio más importante. El `ExternalEvent` necesita la `UIApplication` que solo vive en el `App`. La convertimos en Singleton accesible.
+
+```csharp
+using Autodesk.Revit.UI;
+using RevitAIPlugin.Revit;
+
+namespace Revit_AIPlugin
+{
+    public class App : IExternalApplication
+    {
+        // Singleton para acceder desde cualquier parte del plugin
+        public static App Instance { get; private set; }
+        public UIApplication UIApp { get; private set; }
+        public RevitCommandDispatcher Dispatcher { get; private set; }
+
+        public Result OnStartup(UIControlledApplication application)
+        {
+            Instance = this;
+
+            // Crear el botón en el Ribbon (tu código existente aquí)
+            RibbonPanel panel = application.CreateRibbonPanel("AI Assistant");
+            PushButtonData buttonData = new PushButtonData(
+                "btnAbrirChat",
+                "Abrir Chat IA",
+                System.Reflection.Assembly.GetExecutingAssembly().Location,
+                "Revit_AIPlugin.CommandAbrirChat"
+            );
+            panel.AddItem(buttonData);
+
+            return Result.Succeeded;
+        }
+
+        public Result OnShutdown(UIControlledApplication application)
+        {
+            return Result.Succeeded;
+        }
+
+        // Llamado desde CommandAbrirChat para inicializar el Dispatcher con UIApp
+        public void Initialize(UIApplication uiApp)
+        {
+            if (UIApp == null)
+            {
+                UIApp = uiApp;
+                Dispatcher = new RevitCommandDispatcher(uiApp);
+            }
+        }
+    }
+}
+```
+
+---
+
+## Paso 2 — `CommandAbrirChat.cs` (actualizado)
+
+```csharp
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using RevitAIPlugin.UI;
+
+namespace Revit_AIPlugin
+{
+    [Transaction(TransactionMode.Manual)]
+    public class CommandAbrirChat : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+        {
+            // Inicializar el Dispatcher con acceso al hilo de Revit
+            App.Instance.Initialize(commandData.Application);
+
+            var ventana = new MainWindow();
+            ventana.Topmost = true;
+            ventana.Show();
+            return Result.Succeeded;
+        }
+    }
+}
+```
+
+---
+
+## Paso 3 — `AI/ToolDefinitions.cs` (NUEVO)
+
+Define qué herramientas puede invocar la IA. Groq las recibe como JSON.
+
+```csharp
+using System.Collections.Generic;
+
+namespace RevitAIPlugin.AI
+{
+    public static class ToolDefinitions
+    {
+        /// <summary>
+        /// Retorna la lista de tools en el formato que espera Groq API.
+        /// Agrega aquí nuevas herramientas conforme crezcas el plugin.
+        /// </summary>
+        public static List<object> GetAllTools()
+        {
+            return new List<object>
+            {
+                new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "crear_muro",
+                        description = "Crea un muro en el modelo de Revit en un nivel específico. " +
+                                      "Úsalo cuando el usuario pida crear, agregar o colocar un muro.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                nivel = new
+                                {
+                                    type = "string",
+                                    description = "Nombre del nivel donde se creará el muro. Ejemplo: 'Nivel 1', 'Level 1', 'Planta Baja'."
+                                },
+                                longitud = new
+                                {
+                                    type = "number",
+                                    description = "Longitud del muro en metros. Ejemplo: 5.0"
+                                },
+                                altura = new
+                                {
+                                    type = "number",
+                                    description = "Altura del muro en metros. Ejemplo: 3.0"
+                                },
+                                tipo_muro = new
+                                {
+                                    type = "string",
+                                    description = "Tipo de muro a crear. Ejemplo: 'Hormigón', 'Generic - 200mm', 'Basic Wall'."
+                                }
+                            },
+                            required = new[] { "nivel", "longitud" }
+                        }
+                    }
+                },
+                new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "leer_elementos",
+                        description = "Lee y lista los elementos existentes en el modelo de Revit. " +
+                                      "Úsalo cuando el usuario pregunte qué hay en el modelo, cuántos muros existen, etc.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                categoria = new
+                                {
+                                    type = "string",
+                                    description = "Categoría de elementos a leer. Valores posibles: 'Walls' (muros), 'Doors' (puertas), 'Windows' (ventanas), 'Floors' (pisos), 'Levels' (niveles)."
+                                }
+                            },
+                            required = new[] { "categoria" }
+                        }
+                    }
+                }
+            };
+        }
+    }
+}
+```
+
+---
+
+## Paso 4 — `AI/GroqService.cs` (NUEVO — el corazón del Function Calling)
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading.Tasks;
+using Revit_AIPlugin;
+
+namespace RevitAIPlugin.AI
+{
+    public class GroqService
+    {
+        private const string ApiKey = "TU_API_KEY_AQUI";
+        private const string Endpoint = "https://api.groq.com/openai/v1/chat/completions";
+        private const string Model = "llama-3.3-70b-versatile";
+
+        private static readonly HttpClient _client = new HttpClient();
+
+        // Historial de conversación para mantener contexto
+        private readonly List<Dictionary<string, object>> _historial;
+
+        public GroqService()
+        {
+            _client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", ApiKey);
+
+            _historial = new List<Dictionary<string, object>>
+            {
+                new Dictionary<string, object>
+                {
+                    ["role"] = "system",
+                    ["content"] = "Eres un asistente experto en Autodesk Revit 2026. " +
+                                  "Cuando el usuario te pida realizar acciones en Revit (crear muros, leer elementos, etc.), " +
+                                  "DEBES usar las herramientas disponibles para ejecutarlas directamente. " +
+                                  "No describas cómo hacerlo manualmente; usa las tools para hacerlo tú mismo. " +
+                                  "Responde siempre en español."
+                }
+            };
+        }
+
+        /// <summary>
+        /// Envía un mensaje al modelo y maneja el ciclo completo de Function Calling.
+        /// Retorna la respuesta final en texto para mostrar en el chat.
+        /// </summary>
+        public async Task<string> EnviarMensaje(string mensajeUsuario)
+        {
+            // Agregar mensaje del usuario al historial
+            _historial.Add(new Dictionary<string, object>
+            {
+                ["role"] = "user",
+                ["content"] = mensajeUsuario
+            });
+
+            // Ciclo: puede necesitar múltiples roundtrips si hay tool calls encadenados
+            for (int intento = 0; intento < 5; intento++)
+            {
+                var requestBody = new
+                {
+                    model = Model,
+                    messages = _historial,
+                    tools = ToolDefinitions.GetAllTools(),
+                    tool_choice = "auto",
+                    max_tokens = 1024
+                };
+
+                string jsonBody = JsonSerializer.Serialize(requestBody);
+                var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                HttpResponseMessage response = await _client.PostAsync(Endpoint, content);
+                string responseString = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                    throw new Exception($"Error Groq API ({response.StatusCode}): {responseString}");
+
+                JsonNode jsonResponse = JsonNode.Parse(responseString);
+                JsonNode choice = jsonResponse["choices"][0];
+                JsonNode messageNode = choice["message"];
+                string finishReason = choice["finish_reason"]?.GetValue<string>() ?? "stop";
+
+                // ── Caso A: La IA quiere ejecutar una o más tools ──
+                if (finishReason == "tool_calls")
+                {
+                    // Agregar la respuesta del asistente (con tool_calls) al historial
+                    var assistantMsg = JsonSerializer.Deserialize<Dictionary<string, object>>(
+                        messageNode.ToJsonString()
+                    );
+                    _historial.Add(assistantMsg);
+
+                    // Ejecutar cada tool call y agregar los resultados al historial
+                    JsonArray toolCalls = messageNode["tool_calls"].AsArray();
+                    foreach (JsonNode toolCall in toolCalls)
+                    {
+                        string toolCallId = toolCall["id"].GetValue<string>();
+                        string functionName = toolCall["function"]["name"].GetValue<string>();
+                        string argumentsJson = toolCall["function"]["arguments"].GetValue<string>();
+
+                        // Ejecutar la tool en Revit
+                        string toolResult = await EjecutarTool(functionName, argumentsJson);
+
+                        // Reportar resultado al historial para que la IA continúe
+                        _historial.Add(new Dictionary<string, object>
+                        {
+                            ["role"] = "tool",
+                            ["tool_call_id"] = toolCallId,
+                            ["name"] = functionName,
+                            ["content"] = toolResult
+                        });
+                    }
+
+                    // Continuar el ciclo: la IA procesará los resultados y responderá
+                    continue;
+                }
+
+                // ── Caso B: Respuesta de texto normal ──
+                string respuestaFinal = messageNode["content"]?.GetValue<string>() ?? "(Sin respuesta)";
+
+                // Guardar en historial
+                _historial.Add(new Dictionary<string, object>
+                {
+                    ["role"] = "assistant",
+                    ["content"] = respuestaFinal
+                });
+
+                return respuestaFinal;
+            }
+
+            return "Error: Se superó el límite de iteraciones de tool calling.";
+        }
+
+        /// <summary>
+        /// Router: decide qué herramienta de Revit ejecutar según el nombre recibido.
+        /// </summary>
+        private async Task<string> EjecutarTool(string nombreTool, string argumentosJson)
+        {
+            try
+            {
+                var args = JsonNode.Parse(argumentosJson);
+                var dispatcher = App.Instance.Dispatcher;
+
+                return nombreTool switch
+                {
+                    "crear_muro" => await dispatcher.CrearMuro(
+                        nivel: args["nivel"]?.GetValue<string>() ?? "Level 1",
+                        longitud: args["longitud"]?.GetValue<double>() ?? 5.0,
+                        altura: args["altura"]?.GetValue<double>() ?? 3.0,
+                        tipoMuro: args["tipo_muro"]?.GetValue<string>() ?? ""
+                    ),
+                    "leer_elementos" => await dispatcher.LeerElementos(
+                        categoria: args["categoria"]?.GetValue<string>() ?? "Walls"
+                    ),
+                    _ => $"Error: Herramienta desconocida '{nombreTool}'"
+                };
+            }
+            catch (Exception ex)
+            {
+                return $"Error al ejecutar '{nombreTool}': {ex.Message}";
+            }
+        }
+    }
+}
+```
+
+---
+
+## Paso 5 — `Revit/RevitCommandDispatcher.cs` (NUEVO — el puente seguro al hilo de Revit)
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Autodesk.Revit.UI;
+using RevitAIPlugin.Revit.Tools;
+
+namespace RevitAIPlugin.Revit
+{
+    /// <summary>
+    /// Puente entre el hilo async de la IA y el hilo principal de Revit.
+    /// Usa ExternalEvent para ejecutar código de Revit API de forma segura.
+    /// </summary>
+    public class RevitCommandDispatcher
+    {
+        private readonly UIApplication _uiApp;
+        private readonly CrearMuroHandler _crearMuroHandler;
+        private readonly LeerElementosHandler _leerElementosHandler;
+
+        private readonly ExternalEvent _crearMuroEvent;
+        private readonly ExternalEvent _leerElementosEvent;
+
+        public RevitCommandDispatcher(UIApplication uiApp)
+        {
+            _uiApp = uiApp;
+
+            _crearMuroHandler = new CrearMuroHandler();
+            _leerElementosHandler = new LeerElementosHandler();
+
+            _crearMuroEvent = ExternalEvent.Create(_crearMuroHandler);
+            _leerElementosEvent = ExternalEvent.Create(_leerElementosHandler);
+        }
+
+        /// <summary>
+        /// Solicita crear un muro y espera el resultado de forma async.
+        /// </summary>
+        public async Task<string> CrearMuro(string nivel, double longitud, double altura, string tipoMuro)
+        {
+            _crearMuroHandler.Nivel = nivel;
+            _crearMuroHandler.Longitud = longitud;
+            _crearMuroHandler.Altura = altura;
+            _crearMuroHandler.TipoMuro = tipoMuro;
+            _crearMuroHandler.Resultado = null;
+
+            _crearMuroEvent.Raise();
+
+            // Esperar hasta que Revit procese el evento (máx. 10 segundos)
+            return await EsperarResultado(() => _crearMuroHandler.Resultado);
+        }
+
+        /// <summary>
+        /// Solicita leer elementos del modelo y espera el resultado.
+        /// </summary>
+        public async Task<string> LeerElementos(string categoria)
+        {
+            _leerElementosHandler.Categoria = categoria;
+            _leerElementosHandler.Resultado = null;
+
+            _leerElementosEvent.Raise();
+
+            return await EsperarResultado(() => _leerElementosHandler.Resultado);
+        }
+
+        /// <summary>
+        /// Polling async que espera a que un handler de Revit complete su tarea.
+        /// </summary>
+        private async Task<string> EsperarResultado(Func<string> obtenerResultado, int timeoutMs = 10000)
+        {
+            int elapsed = 0;
+            const int intervalo = 100;
+
+            while (elapsed < timeoutMs)
+            {
+                string resultado = obtenerResultado();
+                if (resultado != null)
+                    return resultado;
+
+                await Task.Delay(intervalo);
+                elapsed += intervalo;
+            }
+
+            return "Error: Timeout al esperar respuesta de Revit.";
+        }
+    }
+}
+```
+
+---
+
+## Paso 6 — `Revit/Tools/CrearMuroTool.cs` (NUEVO)
+
+```csharp
+using System;
+using System.Linq;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitAIPlugin.Revit.Tools
+{
+    /// <summary>
+    /// Handler que se ejecuta en el hilo principal de Revit para crear un muro.
+    /// </summary>
+    public class CrearMuroHandler : IExternalEventHandler
+    {
+        // Parámetros de entrada (seteados antes de Raise())
+        public string Nivel { get; set; }
+        public double Longitud { get; set; }
+        public double Altura { get; set; }
+        public string TipoMuro { get; set; }
+
+        // Resultado de salida (leído después de que Execute termine)
+        public string Resultado { get; set; }
+
+        public void Execute(UIApplication app)
+        {
+            try
+            {
+                Document doc = app.ActiveUIDocument.Document;
+
+                // 1. Buscar el nivel por nombre (case-insensitive)
+                Level nivel = new FilteredElementCollector(doc)
+                    .OfClass(typeof(Level))
+                    .Cast<Level>()
+                    .FirstOrDefault(l =>
+                        l.Name.Equals(Nivel, StringComparison.OrdinalIgnoreCase) ||
+                        l.Name.Contains(Nivel, StringComparison.OrdinalIgnoreCase));
+
+                if (nivel == null)
+                {
+                    // Si no se encuentra, usar el primer nivel disponible
+                    nivel = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level))
+                        .Cast<Level>()
+                        .OrderBy(l => l.Elevation)
+                        .FirstOrDefault();
+
+                    if (nivel == null)
+                    {
+                        Resultado = $"Error: No se encontraron niveles en el modelo.";
+                        return;
+                    }
+                }
+
+                // 2. Buscar el tipo de muro
+                WallType tipoMuroObj = new FilteredElementCollector(doc)
+                    .OfClass(typeof(WallType))
+                    .Cast<WallType>()
+                    .FirstOrDefault(wt =>
+                        !string.IsNullOrEmpty(TipoMuro) &&
+                        wt.Name.Contains(TipoMuro, StringComparison.OrdinalIgnoreCase));
+
+                // Si no se encuentra el tipo específico, usar el primero disponible
+                if (tipoMuroObj == null)
+                {
+                    tipoMuroObj = new FilteredElementCollector(doc)
+                        .OfClass(typeof(WallType))
+                        .Cast<WallType>()
+                        .FirstOrDefault();
+                }
+
+                if (tipoMuroObj == null)
+                {
+                    Resultado = "Error: No se encontraron tipos de muro en el proyecto.";
+                    return;
+                }
+
+                // 3. Convertir longitud de metros a pies (unidad interna de Revit)
+                double longitudPies = UnitUtils.ConvertToInternalUnits(Longitud, UnitTypeId.Meters);
+                double alturaPies = UnitUtils.ConvertToInternalUnits(Altura > 0 ? Altura : 3.0, UnitTypeId.Meters);
+
+                // 4. Definir la línea del muro (horizontal, desde el origen)
+                XYZ puntoInicio = new XYZ(0, 0, nivel.Elevation);
+                XYZ puntoFin = new XYZ(longitudPies, 0, nivel.Elevation);
+                Line lineaMuro = Line.CreateBound(puntoInicio, puntoFin);
+
+                // 5. Crear el muro dentro de una transacción
+                using (Transaction tx = new Transaction(doc, "Crear Muro - AI Plugin"))
+                {
+                    tx.Start();
+
+                    Wall muroCreado = Wall.Create(
+                        doc,
+                        lineaMuro,
+                        tipoMuroObj.Id,
+                        nivel.Id,
+                        alturaPies,
+                        0,      // offset desde el nivel
+                        false,  // no voltear
+                        false   // no es muro estructural
+                    );
+
+                    tx.Commit();
+
+                    Resultado = $"✅ Muro creado exitosamente.\n" +
+                                $"• Tipo: {tipoMuroObj.Name}\n" +
+                                $"• Nivel: {nivel.Name}\n" +
+                                $"• Longitud: {Longitud}m\n" +
+                                $"• Altura: {(Altura > 0 ? Altura : 3.0)}m\n" +
+                                $"• ID del elemento: {muroCreado.Id.Value}";
+                }
+            }
+            catch (Exception ex)
+            {
+                Resultado = $"Error al crear muro: {ex.Message}";
+            }
+        }
+
+        public string GetName() => "CrearMuroHandler";
+    }
+}
+```
+
+---
+
+## Paso 7 — `Revit/Tools/LeerElementosTool.cs` (NUEVO)
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitAIPlugin.Revit.Tools
+{
+    /// <summary>
+    /// Handler que lee elementos del modelo de Revit por categoría.
+    /// </summary>
+    public class LeerElementosHandler : IExternalEventHandler
+    {
+        public string Categoria { get; set; }
+        public string Resultado { get; set; }
+
+        private static readonly Dictionary<string, BuiltInCategory> _categorias =
+            new Dictionary<string, BuiltInCategory>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "Walls",   BuiltInCategory.OST_Walls },
+                { "Muros",   BuiltInCategory.OST_Walls },
+                { "Doors",   BuiltInCategory.OST_Doors },
+                { "Puertas", BuiltInCategory.OST_Doors },
+                { "Windows", BuiltInCategory.OST_Windows },
+                { "Ventanas",BuiltInCategory.OST_Windows },
+                { "Floors",  BuiltInCategory.OST_Floors },
+                { "Pisos",   BuiltInCategory.OST_Floors },
+                { "Levels",  BuiltInCategory.OST_Levels },
+                { "Niveles", BuiltInCategory.OST_Levels },
+                { "Columns", BuiltInCategory.OST_Columns },
+                { "Columnas",BuiltInCategory.OST_Columns },
+            };
+
+        public void Execute(UIApplication app)
+        {
+            try
+            {
+                Document doc = app.ActiveUIDocument.Document;
+
+                if (!_categorias.TryGetValue(Categoria, out BuiltInCategory bic))
+                {
+                    Resultado = $"Error: Categoría '{Categoria}' no reconocida. " +
+                                $"Categorías válidas: {string.Join(", ", _categorias.Keys)}.";
+                    return;
+                }
+
+                var elementos = new FilteredElementCollector(doc)
+                    .OfCategory(bic)
+                    .WhereElementIsNotElementType()
+                    .ToList();
+
+                if (!elementos.Any())
+                {
+                    Resultado = $"No se encontraron elementos de tipo '{Categoria}' en el modelo.";
+                    return;
+                }
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"Se encontraron {elementos.Count} elemento(s) de tipo '{Categoria}':");
+
+                // Mostrar máx. 10 elementos para no saturar el contexto de la IA
+                foreach (var elem in elementos.Take(10))
+                {
+                    string nombre = elem.Name ?? "(sin nombre)";
+                    string nivel = elem.LookupParameter("Level")?.AsValueString()
+                                   ?? elem.LookupParameter("Base Level")?.AsValueString()
+                                   ?? "N/A";
+                    sb.AppendLine($"  • ID {elem.Id.Value}: {nombre} | Nivel: {nivel}");
+                }
+
+                if (elementos.Count > 10)
+                    sb.AppendLine($"  ... y {elementos.Count - 10} más.");
+
+                Resultado = sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                Resultado = $"Error al leer elementos: {ex.Message}";
+            }
+        }
+
+        public string GetName() => "LeerElementosHandler";
+    }
+}
+```
+
+---
+
+## Paso 8 — Actualizar `MainWindow.xaml.cs` (solo el método `EnviarMensaje`)
+
+```csharp
+// Agregar esto como campo privado en la clase MainWindow:
+// private readonly GroqService _groqService = new GroqService();
+
+private async Task EnviarMensaje()
+{
+    string userText = txtInput.Text.Trim();
+    if (string.IsNullOrEmpty(userText)) return;
+
+    AgregarMensaje(userText, "👤 Tú", "#45475A", "#CDD6F4", "Right");
+    txtInput.Text = "";
+    btnEnviar.IsEnabled = false;
+    AgregarMensaje("⏳ Procesando...", "🤖 IA", "#313244", "#6C7086", "Left");
+
+    await Task.Delay(300);
+
+    try
+    {
+        // Usa el GroqService con historial y Function Calling
+        string respuesta = await _groqService.EnviarMensaje(userText);
+        _messages.RemoveAt(_messages.Count - 1);
+        AgregarMensaje(respuesta, "🤖 IA", "#313244", "#CDD6F4", "Left");
+    }
+    catch (Exception ex)
+    {
+        _messages.RemoveAt(_messages.Count - 1);
+        AgregarMensaje($"Error: {ex.Message}", "⚠️ Sistema", "#45475A", "#F38BA8", "Left");
+    }
+    finally
+    {
+        btnEnviar.IsEnabled = true;
+    }
+}
+```
+
+---
+
+## Flujo completo cuando el usuario dice "Crea un muro de 6 metros en Nivel 1"
+
+```
+Usuario escribe mensaje
+        │
+        ▼
+GroqService.EnviarMensaje()
+  → POST a Groq con tools disponibles
+        │
+        ▼
+Groq responde: finish_reason = "tool_calls"
+  → function: "crear_muro"
+  → args: { nivel:"Nivel 1", longitud:6.0, altura:3.0 }
+        │
+        ▼
+EjecutarTool("crear_muro", args)
+  → Dispatcher.CrearMuro(...)
+        │
+        ▼
+CrearMuroEvent.Raise()  ← async, no bloquea la UI
+  → Revit procesa en su hilo principal
+  → CrearMuroHandler.Execute() crea el muro real
+  → Handler.Resultado = "✅ Muro creado..."
+        │
+        ▼
+EsperarResultado() detecta que Resultado != null
+  → Devuelve el resultado al GroqService
+        │
+        ▼
+GroqService envía resultado de la tool de vuelta a Groq
+  → Groq genera respuesta final en lenguaje natural
+        │
+        ▼
+UI muestra: "✅ He creado el muro de hormigón de 6m en el Nivel 1."
+```
+
+---
+
+## Siguiente paso recomendado
+
+Implementa esto en orden: `App.cs` → `CommandAbrirChat.cs` → `ToolDefinitions.cs` → `GroqService.cs` → `RevitCommandDispatcher.cs` → los dos handlers → actualizar `MainWindow.xaml.cs`. Compila, prueba con "¿cuántos muros hay en el modelo?" primero (no modifica nada), y luego "crea un muro de 4 metros en Nivel 1".
+
+¿Quieres que empecemos con algún archivo específico o tienes dudas sobre alguna parte del flujo?

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RevitAIPlugin.UI/RevitAIPlugin.UI.csproj" Id="b7814184-bbdc-4bcf-a2f3-5d80362880bc" />
+  <Project Path="Revit_AIPlugin/Revit_AIPlugin.csproj" />
+</Solution>
