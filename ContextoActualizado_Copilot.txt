@@ -1,0 +1,312 @@
+# 🏗️ RevitAIPlugin — Contexto Actualizado de Desarrollo para Copilot
+
+## 📋 Resumen del Proyecto e Hito Alcanzado
+Estamos desarrollando un plugin de IA para Autodesk Revit 2026. El plugin permite controlar el modelo BIM mediante lenguaje natural a través de una ventana de chat interna. 
+
+¡HITO LOGRADO!: Ya logramos conectar de forma exitosa la interfaz de usuario con la API de Groq (usando LLaMA 3.3 70B) implementando un sistema real de Tool Calling. La IA ya es capaz de interceptar frases en lenguaje natural (ej. "¿Cuántos muros hay?") y, en lugar de responder texto genérico, devuelve un JSON estructurado llamando a la herramienta correspondiente (ej. 'LeerElementos').
+
+## 🛠️ Stack Tecnológico Actual
+- Lenguaje: C# + .NET 8.0-windows
+- Entorno: Autodesk Revit 2026.4 (Licencia Educativa oficial activa)
+- UI: WPF (Windows Presentation Foundation) en modo Modeless (No bloquea el uso de Revit)
+- API de IA: Groq API (Servicio de inferencia de ultra alta velocidad)
+
+---
+
+## 📁 Estructura del Código y Archivos Clave en la Solución
+
+### 1. RevitAIPlugin.UI / GroqService.cs
+Este servicio gestiona los payloads y el Tool Calling formateado correctamente para Groq/OpenAI. Convierte los esquemas de texto en objetos JSON válidos mediante JsonDocument.
+
+```csharp
+using System;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+namespace RevitAIPlugin.UI
+{
+    public class GroqService
+    {
+        private readonly HttpClient _http;
+        private readonly string _apiKey;
+        private readonly string _baseUrl;
+        private readonly string _model;
+
+        public GroqService(string apiKey, string baseUrl = "[https://api.groq.com/openai](https://api.groq.com/openai)", string model = "llama-3.3-70b-versatile")
+        {
+            _apiKey = apiKey;
+            _baseUrl = baseUrl;
+            _model = model;
+            _http = new HttpClient();
+            _http.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
+        }
+
+        public async Task<string> ChatCompletionAsync(string systemPrompt, string userMessage)
+        {
+            var requestBody = new
+            {
+                model = _model,
+                messages = new[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userMessage }
+                },
+                max_tokens = 500,
+                tools = new[]
+                {
+                    new { 
+                        type = "function", 
+                        function = new {
+                            name = ToolDefinitions.CrearMuro.Name, 
+                            description = ToolDefinitions.CrearMuro.Description, 
+                            parameters = JsonDocument.Parse(ToolDefinitions.CrearMuro.JsonSchema).RootElement 
+                        }
+                    },
+                    new { 
+                        type = "function", 
+                        function = new {
+                            name = ToolDefinitions.LeerElementos.Name, 
+                            description = ToolDefinitions.LeerElementos.Description, 
+                            parameters = JsonDocument.Parse(ToolDefinitions.LeerElementos.JsonSchema).RootElement 
+                        }
+                    }
+                },
+                tool_choice = "auto"
+            };
+
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var resp = await _http.PostAsync($"{_baseUrl}/v1/chat/completions", content);
+            var respJson = await resp.Content.ReadAsStringAsync();
+
+            if (!resp.IsSuccessStatusCode)
+                throw new Exception($"API Error {resp.StatusCode}: {respJson}");
+
+            using var doc = JsonDocument.Parse(respJson);
+            var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
+
+            if (message.TryGetProperty("tool_calls", out var toolCalls))
+            {
+                return toolCalls.GetRawText();
+            }
+
+            return message.GetProperty("content").GetString() ?? string.Empty;
+        }
+    }
+}
+
+2. RevitAIPlugin.UI / RevitAICommandHandler.cs
+Este archivo implementa 'IExternalEventHandler'. Es el puente asíncrono obligatorio requerido por Revit para que la UI de WPF mande solicitudes de lectura/escritura de forma segura a la Revit API sin crashear el hilo principal.
+
+C#
+using System;
+using System.Windows;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitAIPlugin.UI
+{
+    public class RevitAICommandHandler : IExternalEventHandler
+    {
+        public string Action { get; set; } = "";
+        public string CategoryParam { get; set; } = "";
+        
+        public void Execute(UIApplication app)
+        {
+            Document doc = app.ActiveUIDocument.Document;
+
+            try
+            {
+                if (Action == "LeerElementos")
+                {
+                    ContarElementos(doc, CategoryParam);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error ejecutando acción en Revit: {ex.Message}", "RevitAI Plugin");
+            }
+        }
+
+        private void ContarElementos(Document doc, string categoriaNombre)
+        {
+            BuiltInCategory category = BuiltInCategory.OST_Walls;
+
+            if (categoriaNombre.Equals("Walls", StringComparison.OrdinalIgnoreCase)) category = BuiltInCategory.OST_Walls;
+            else if (categoriaNombre.Equals("Doors", StringComparison.OrdinalIgnoreCase)) category = BuiltInCategory.OST_Doors;
+            else if (categoriaNombre.Equals("Windows", StringComparison.OrdinalIgnoreCase)) category = BuiltInCategory.OST_Windows;
+
+            var collector = new FilteredElementCollector(doc)
+                                .OfCategory(category)
+                                .WhereElementIsNotElementType();
+
+            int conteo = collector.GetElementCount();
+
+            MessageBox.Show($"[RevitAI] Análisis completado. Encontré {conteo} elementos de la categoría {categoriaNombre} en este modelo.", "Asistente IA");
+        }
+
+        public string GetName()
+        {
+            return "RevitAI Command Handler";
+        }
+    }
+}
+3. RevitAIPlugin.UI / MainWindow.xaml.cs
+Controlador principal de la vista del chat. Captura el input del usuario, renderiza el retraso UX para los tres puntitos (...), parsea los argumentos JSON devueltos por GroqService y eleva los eventos asíncronos hacia Revit de forma segura.
+
+C#
+using System;
+using System.Collections.ObjectModel;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+
+namespace RevitAIPlugin.UI
+{
+    public class ChatMessage
+    {
+        public string Text { get; set; } = "";
+        public string Sender { get; set; } = "";
+        public string Background { get; set; } = "#313244";
+        public string TextColor { get; set; } = "#CDD6F4";
+        public string Alignment { get; set; } = "Left";
+    }
+
+    public partial class MainWindow : Window
+    {
+        private const string API_KEY = "TU_NUEVA_API_KEY_AQUI"; 
+        private const string BASE_URL = "[https://api.groq.com/openai](https://api.groq.com/openai)";
+        private const string MODEL = "llama-3.3-70b-versatile";
+
+        private readonly ObservableCollection<ChatMessage> _messages = new();
+        private readonly object _uiapp;
+
+        private RevitAICommandHandler _handler = new();
+        private ExternalEvent _externalEvent;
+
+        private const string SYSTEM_PROMPT = """
+            Eres un asistente de IA integrado dentro de Autodesk Revit 2026.
+            Ayudas a arquitectos e ingenieros a entender qué pueden hacer con el modelo BIM.
+            Responde siempre en español, de forma clara y concisa.
+            Si el usuario pide crear elementos, explica qué harías paso a paso.
+            Por ahora estamos en modo de prueba — confirma que entendiste la instrucción
+            y explica cómo la ejecutarías en Revit.
+            """;
+
+        public MainWindow(object uiapp)
+        {
+            _uiapp = uiapp;
+            InitializeComponent();
+            messagesPanel.ItemsSource = _messages;
+            _externalEvent = ExternalEvent.Create(_handler);
+
+            AgregarMensaje("¡Hola! Soy tu asistente de Revit. ¿Qué quieres hacer hoy?",
+                           "🤖 IA", "#313244", "#CDD6F4", "Left");
+        }
+
+        public MainWindow() : this(null) { }
+
+        private void AgregarMensaje(string texto, string sender, string bg, string color, string alignment)
+        {
+            _messages.Add(new ChatMessage
+            {
+                Text = texto,
+                Sender = sender,
+                Background = bg,
+                TextColor = color,
+                Alignment = alignment
+            });
+            scrollViewer.ScrollToEnd();
+        }
+
+        private async void BtnEnviar_Click(object sender, RoutedEventArgs e)
+        {
+            await EnviarMensaje();
+        }
+
+        private async void TxtInput_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter && !Keyboard.IsKeyDown(Key.LeftShift))
+            {
+                e.Handled = true;
+                await EnviarMensaje();
+            }
+        }
+
+        private async Task EnviarMensaje()
+        {
+            string userText = txtInput.Text.Trim();
+            if (string.IsNullOrEmpty(userText)) return;
+
+            AgregarMensaje(userText, "👤 Tú", "#45475A", "#CDD6F4", "Right");
+            txtInput.Text = "";
+            btnEnviar.IsEnabled = false;
+
+            AgregarMensaje("...", "🤖 IA", "#313244", "#6C7086", "Left");
+            await Task.Delay(300);
+
+            try
+            {
+                var groqService = new GroqService(API_KEY, BASE_URL, MODEL);
+                string respuestaRaw = await groqService.ChatCompletionAsync(SYSTEM_PROMPT, userText);
+                string respuestaFinal = "";
+
+                if (respuestaRaw.TrimStart().StartsWith("["))
+                {
+                    using var jsonDoc = JsonDocument.Parse(respuestaRaw);
+                    var root = jsonDoc.RootElement[0];
+                    var functionObj = root.GetProperty("function");
+                    string name = functionObj.GetProperty("name").GetString();
+                    string argumentsRaw = functionObj.GetProperty("arguments").GetString();
+
+                    using var argsDoc = JsonDocument.Parse(argumentsRaw);
+                    string category = argsDoc.RootElement.GetProperty("category").GetString();
+
+                    _handler.Action = name;          
+                    _handler.CategoryParam = category; 
+                    _externalEvent.Raise();           
+
+                    respuestaFinal = $"⚙️ [SYSTEM]: Ejecutando lectura de la categoría '{category}' en el modelo...";
+                }
+                else
+                {
+                    respuestaFinal = respuestaRaw;
+                }
+
+                _messages.RemoveAt(_messages.Count - 1);
+                AgregarMensaje(respuestaFinal, "🤖 IA", "#313244", "#CDD6F4", "Left");
+            }
+            catch (Exception ex)
+            {
+                _messages.RemoveAt(_messages.Count - 1);
+                AgregarMensaje($"Error: {ex.Message}", "⚠️ Sistema", "#45475A", "#F38BA8", "Left");
+            }
+            finally
+            {
+                btnEnviar.IsEnabled = true;
+            }
+        }
+    }
+}
+🗺️ Plan de Trabajo a Futuro Próximo (Siguientes Pasos Técnicos)
+Cuando me pidas implementar nuevas funcionalidades o mejorar las existentes en este proyecto, sigue estos lineamientos estrictos:
+
+Evolución del Handler (RevitAICommandHandler.cs):
+
+Necesitamos expandir la lógica para mapear más categorías nativas de Revit en el FilteredElementCollector.
+
+Debemos implementar el flujo de la acción CrearMuro. Esto requerirá abrir una Transaction de Revit (using var tx = new Transaction(doc, "Crear Muro IA")), convertir las unidades de metros a pies (ya que la Revit API trabaja internamente en pies), y usar Wall.Create().
+
+Abstracción Dinámica y Funciones Genéricas:
+
+En lugar de programar una función rígida por cada botón de Revit, ayúdame a estructurar métodos genéricos que acepten parámetros dinámicos (Strings, Doubles, Coordenadas) desde el JSON de la IA.
+
+Formato de Respuesta Completo:
+
+Cuando te pida modificar o crear un método basado en este contexto, no uses marcadores de posición perezosos como // ... código existente .... Dame el bloque completo estructurado para evitar errores de compilación por llaves faltantes o namespaces incorrectos.

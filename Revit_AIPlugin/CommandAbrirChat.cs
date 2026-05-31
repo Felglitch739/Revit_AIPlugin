@@ -10,10 +10,9 @@ namespace Revit_AIPlugin
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            // Inicializar el Dispatcher con acceso al hilo de Revit
             App.Instance.Initialize(commandData.Application);
 
-            var ventana = new RevitAIPlugin.UI.MainWindow();
+            var ventana = new MainWindow(App.Instance.Dispatcher);
             ventana.Topmost = true;
             ventana.Show();
             return Result.Succeeded;

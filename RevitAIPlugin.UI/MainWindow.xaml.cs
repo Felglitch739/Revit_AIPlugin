@@ -1,17 +1,16 @@
-﻿using System.Collections.ObjectModel;
-using System.Net.Http;
-using System.Text;
+﻿using System;
+using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace RevitAIPlugin.UI
 {
     public class ChatMessage
     {
-        public string Text { get; set; } = "";
-        public string Sender { get; set; } = "";
+        public string Text { get; set; } = string.Empty;
+        public string Sender { get; set; } = string.Empty;
         public string Background { get; set; } = "#313244";
         public string TextColor { get; set; } = "#CDD6F4";
         public string Alignment { get; set; } = "Left";
@@ -19,39 +18,47 @@ namespace RevitAIPlugin.UI
 
     public partial class MainWindow : Window
     {
-        // ⚠️ IMPORTANTE: Pon aquí tu API key y base URL del hackaton
-        private const string API_KEY = "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";
         private const string BASE_URL = "https://api.groq.com/openai";
         private const string MODEL = "llama-3.3-70b-versatile";
+        private const string API_KEY_ENVIRONMENT_VARIABLE = "GROQ_API_KEY";
 
-        private readonly HttpClient _httpClient = new();
         private readonly ObservableCollection<ChatMessage> _messages = new();
-        private readonly object _uiapp;
+        private readonly IChatCompletionService? _chatService;
+        private readonly IToolExecutor? _toolExecutor;
 
-        // Sistema prompt — le explica a la IA que está dentro de Revit
-        private const string SYSTEM_PROMPT = """
-            Eres un asistente de IA integrado dentro de Autodesk Revit 2026.
-            Ayudas a arquitectos e ingenieros a entender qué pueden hacer con el modelo BIM.
-            Responde siempre en español, de forma clara y concisa.
-            Si el usuario pide crear elementos, explica qué harías paso a paso.
-            Por ahora estamos en modo de prueba — confirma que entendiste la instrucción
-            y explica cómo la ejecutarías en Revit.
-            """;
+        private static string BuildSystemPrompt() => PromptTemplates.BuildSystemPrompt();
 
-        // Nuevo constructor que acepta la instancia de UIApplication como objeto para evitar referencias cruzadas entre proyectos.
-        public MainWindow(object uiapp)
+        public MainWindow(IRevitCommandDispatcher? revitDispatcher)
         {
-            _uiapp = uiapp;
             InitializeComponent();
             messagesPanel.ItemsSource = _messages;
+            _chatService = CrearChatService();
+            _toolExecutor = new RevitToolExecutor(revitDispatcher);
 
-            // Mensaje de bienvenida
             AgregarMensaje("¡Hola! Soy tu asistente de Revit. ¿Qué quieres hacer hoy?",
                            "🤖 IA", "#313244", "#CDD6F4", "Left");
         }
 
-        // Mantener constructor por compatibilidad si alguien lo llama sin UIApplication
-        public MainWindow() : this(null) { }
+        public MainWindow() : this(null)
+        {
+        }
+
+        private static IChatCompletionService? CrearChatService()
+        {
+            string? apiKey = Environment.GetEnvironmentVariable(API_KEY_ENVIRONMENT_VARIABLE);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                MessageBox.Show(
+                    "No se encontró la variable de entorno GROQ_API_KEY. Configúrala y reinicia Visual Studio para usar el asistente.",
+                    "Revit AI Assistant",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+
+                return null;
+            }
+
+            return new GroqService(apiKey, BASE_URL, MODEL);
+        }
 
         private void AgregarMensaje(string texto, string sender, string bg, string color, string alignment)
         {
@@ -63,8 +70,6 @@ namespace RevitAIPlugin.UI
                 TextColor = color,
                 Alignment = alignment
             });
-
-            // Scroll al último mensaje
             scrollViewer.ScrollToEnd();
         }
 
@@ -84,28 +89,50 @@ namespace RevitAIPlugin.UI
 
         private async Task EnviarMensaje()
         {
+            if (_chatService == null)
+            {
+                return;
+            }
+
+            if (_toolExecutor == null)
+            {
+                return;
+            }
+
             string userText = txtInput.Text.Trim();
-            if (string.IsNullOrEmpty(userText)) return;
+            if (string.IsNullOrEmpty(userText))
+            {
+                return;
+            }
 
-            // Mostrar mensaje del usuario
             AgregarMensaje(userText, "👤 Tú", "#45475A", "#CDD6F4", "Right");
-            txtInput.Text = "";
+            txtInput.Text = string.Empty;
             btnEnviar.IsEnabled = false;
-
-            // Indicador de "escribiendo..."
             AgregarMensaje("...", "🤖 IA", "#313244", "#6C7086", "Left");
 
             try
             {
-                string respuesta = await LlamarGPT(userText);
+                GroqCompletionResult completion = await _chatService.ChatCompletionAsync(BuildSystemPrompt(), userText);
+                string respuestaFinal = completion.HasToolCalls
+                    ? await EjecutarToolsAsync(completion, userText)
+                    : string.IsNullOrWhiteSpace(completion.Content)
+                        ? "No he podido generar una respuesta útil en este momento."
+                        : completion.Content;
 
-                // Quitar el indicador y mostrar respuesta real
-                _messages.RemoveAt(_messages.Count - 1);
-                AgregarMensaje(respuesta, "🤖 IA", "#313244", "#CDD6F4", "Left");
+                if (_messages.Count > 0)
+                {
+                    _messages.RemoveAt(_messages.Count - 1);
+                }
+
+                AgregarMensaje(respuestaFinal, "🤖 IA", "#313244", "#CDD6F4", "Left");
             }
             catch (Exception ex)
             {
-                _messages.RemoveAt(_messages.Count - 1);
+                if (_messages.Count > 0)
+                {
+                    _messages.RemoveAt(_messages.Count - 1);
+                }
+
                 AgregarMensaje($"Error: {ex.Message}", "⚠️ Sistema", "#45475A", "#F38BA8", "Left");
             }
             finally
@@ -114,37 +141,43 @@ namespace RevitAIPlugin.UI
             }
         }
 
-        private async Task<string> LlamarGPT(string userMessage)
+        private async Task<string> EjecutarToolsAsync(GroqCompletionResult completion, string userMessage)
         {
-            var requestBody = new
+            if (_toolExecutor == null)
             {
-                model = MODEL,
-                messages = new[]
+                return "Error: el ejecutor de herramientas no está disponible en esta sesión.";
+            }
+
+            var resumenHerramientas = new System.Text.StringBuilder();
+
+            foreach (GroqToolCall toolCall in completion.ToolCalls)
+            {
+                try
                 {
-                    new { role = "system", content = SYSTEM_PROMPT },
-                    new { role = "user", content = userMessage }
-                },
-                max_tokens = 500
-            };
+                    // Ejecutamos cada llamada y añadimos un pequeño retardo entre llamadas para evitar solapamiento de transacciones
+                    string toolResult = await _toolExecutor.ExecuteAsync(toolCall);
+                    resumenHerramientas.AppendLine(toolResult);
+                    resumenHerramientas.AppendLine();
 
-            var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+                    await Task.Delay(300); // 300ms entre cada ejecución
+                }
+                catch (Exception ex)
+                {
+                    resumenHerramientas.AppendLine($"⚠️ {toolCall.Name}: {ex.Message}");
+                    resumenHerramientas.AppendLine();
+                }
+            }
 
-            _httpClient.DefaultRequestHeaders.Clear();
-            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {API_KEY}");
+            string toolResultCombined = resumenHerramientas.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(toolResultCombined))
+            {
+                return "No se obtuvo resultado de la herramienta.";
+            }
 
-            var response = await _httpClient.PostAsync($"{BASE_URL}/v1/chat/completions", content);
-            var responseJson = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"API Error {response.StatusCode}: {responseJson}");
-
-            using var doc = JsonDocument.Parse(responseJson);
-            return doc.RootElement
-                      .GetProperty("choices")[0]
-                      .GetProperty("message")
-                      .GetProperty("content")
-                      .GetString() ?? "Sin respuesta";
+            string naturalResponse = await _chatService!.GenerateNaturalResponseAsync(BuildSystemPrompt(), userMessage, toolResultCombined);
+            return string.IsNullOrWhiteSpace(naturalResponse)
+                ? toolResultCombined
+                : naturalResponse;
         }
     }
 }

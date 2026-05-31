@@ -1,0 +1,465 @@
+================================================================================
+					REVIT AI PLUGIN - PROJECT CONTEXT
+================================================================================
+Generated: 2025-01-15
+Project Status: ACTIVE DEVELOPMENT
+Build Status: ✅ SUCCESSFUL (Compilation passing)
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+PROJECT NAME: Revit AIPlugin
+DESCRIPTION: 
+  Un plugin de Autodesk Revit que integra IA (Groq Chat API) para automatizar
+  la creación de elementos arquitectónicos (muros, habitaciones, puertas,
+  ventanas, mobiliario) mediante comandos en lenguaje natural.
+
+ARCHITECTURE PATTERN: 
+  - WPF Desktop UI + Revit Add-in Backend
+  - Event-driven (ExternalEvent-based command dispatch)
+  - LLM-powered tool orchestration (Groq API)
+  - Structured logging (Serilog)
+
+TARGET FRAMEWORK: .NET 8
+
+REPOSITORY:
+  - Remote: https://github.com/Felglitch739/Revit_AIPlugin
+  - Branch: master
+  - Local Path: C:\Users\HP\source\repos\Revit_AIPlugin\
+
+================================================================================
+2. SOLUTION STRUCTURE
+================================================================================
+
+Two Main Projects:
+  1. RevitAIPlugin.UI
+	 - WPF desktop application (user interface)
+	 - LLM orchestration (Groq service)
+	 - Tool execution routing
+	 - Target: net8.0-windows (WPF)
+
+  2. Revit_AIPlugin
+	 - Revit Add-in backend
+	 - Command handlers & External Events
+	 - Revit API integration
+	 - Logging service
+	 - Target: net8.0
+
+================================================================================
+3. CORE COMPONENTS & FUNCTIONALITY
+================================================================================
+
+3.1 WPF UI (RevitAIPlugin.UI)
+───────────────────────────────
+Location: RevitAIPlugin.UI/
+
+Key Files:
+  • MainWindow.xaml.cs
+	- Main UI window
+	- Integrates GroqService for LLM calls
+	- Displays command inputs and results
+	- Builds system prompts & tool definitions
+
+  • GroqService.cs (Services/)
+	- HTTP client for Groq Chat API
+	- Endpoint: https://api.groq.com/openai/v1/chat/completions
+	- Handles tool calling (JSON parsing)
+	- Converts LLM tool calls to structured commands
+
+  • ToolDefinitions.cs (AI/)
+	- JSON schema definitions for 6 Revit tools:
+	  1. CrearMuro (Create Wall)
+	  2. LeerElementos (Read Elements)
+	  3. CrearHabitacionEstructurada (Create Structured Room)
+	  4. ColocarMobiliario (Place Furniture)
+	  5. ColocarPuerta (Place Door)
+	  6. ColocarVentana (Place Window)
+
+  • PromptTemplates.cs (AI/)
+	- System prompt engineering
+	- Advanced constraints:
+	  * Furniture spatial rules (Cartesian coordinates)
+	  * Revit default furniture name mapping
+	  * Collision avoidance
+	  * Perimeter-only placement for doors/windows
+	  * Spacing rules (minimum padding from walls)
+
+  • RevitToolExecutor.cs (Services/)
+	- Routes Groq tool calls to dispatcher methods
+	- Parses JSON arguments
+	- Handles tool execution lifecycle
+	- Returns results to UI
+
+  • IRevitCommandDispatcher.cs (Abstractions/)
+	- Interface contract for all Revit operations
+	- 6 methods corresponding to tool definitions
+	- Signature examples:
+	  - CrearMuro(string nivel, double longitud, double altura, string tipoMuro)
+	  - ColocarPuerta(string tipoPuerta, double x, double y)
+	  - ColocarVentana(string tipoVentana, double x, double y)
+	  - etc.
+
+3.2 Revit Add-in Backend (Revit_AIPlugin)
+──────────────────────────────────────────
+Location: Revit_AIPlugin/Revit/
+
+Key Components:
+  • RevitCommandDispatcher.cs
+	- Implements IRevitCommandDispatcher
+	- Bridges UI requests to Revit ExternalEvent handlers
+	- Manages handler instances & polling
+	- Methods queue commands and wait for results
+
+  • Tools/ (Handler Directory)
+	External Event Handlers (run on Revit's main thread):
+
+	1. CrearMuroHandler.cs
+	   - Creates single wall on specified level
+	   - Inputs: nivel, longitud, altura, tipoMuro
+	   - Finds wall type, creates line geometry, calls doc.Create.NewWall()
+	   - Logs: entry, wall type lookup, line creation, success/error with duration
+
+	2. LeerElementosHandler.cs
+	   - Reads/lists elements by category
+	   - Supports: Walls, Doors, Windows, Floors, Levels, Columns
+	   - Outputs: Element name, level, ID (max 10 per result)
+	   - Logs: entry, category validation, element count, details with duration
+
+	3. CrearHabitacionEstructuradaHandler.cs
+	   - Creates rectangular room perimeter
+	   - Inputs: nivel, ancho, largo, altura
+	   - Builds 4 walls from origin to width/length extents
+	   - Logs: entry, level found, wall creation, duration
+
+	4. ColocarMobiliarioHandler.cs
+	   - Places furniture family instance
+	   - Inputs: tipoMueble, x, y (meters)
+	   - Searches OST_Furniture category
+	   - Fallback: uses first available symbol if type not found
+	   - Logs: entry, family search, point conversion, placement, duration
+
+	5. ColocarPuertaHandler.cs
+	   - Places host-based door on nearest wall
+	   - Inputs: tipoPuerta, x, y (meters)
+	   - Searches OST_Doors, finds nearest wall host
+	   - Uses LocationCurve.Curve.Project() for proximity
+	   - Logs: entry, family/host search, placement details, duration
+
+	6. ColocarVentanaHandler.cs
+	   - Places host-based window on nearest wall
+	   - Inputs: tipoVentana, x, y (meters)
+	   - Searches OST_Windows, finds nearest wall host
+	   - Same wall-proximity logic as doors
+	   - Logs: entry, family/host search, placement details, duration
+
+3.3 Logging Service (Revit_AIPlugin/Logging/)
+──────────────────────────────────────────────
+Location: Revit_AIPlugin/Logging/
+
+  • RevitAILogger.cs
+	- Centralized Serilog-based facade
+	- Singleton pattern with lock
+	- Three output sinks:
+	  1. Console (real-time output)
+	  2. Daily rotating file: %LocalAppData%\RevitAIPlugin\logs\revit-ai-YYYY-MM-DD.log
+		 (max 10MB, retention: 7 days)
+	  3. Error-only file: errors-YYYY-MM-DD.log
+		 (max 5MB, for quick problem identification)
+
+	Public Methods:
+	  - Initialize(logDirectory = null) : void
+		Lazy-initializes logger, creates log directory
+	  - Info(string message, params object[] args) : void
+	  - Warn(string message, params object[] args) : void
+	  - Error(Exception ex, string message, params object[] args) : void
+	  - Debug(string message, params object[] args) : void
+	  - Close() : void
+		Flushes logs, called at app shutdown
+
+================================================================================
+4. LLM INTEGRATION (Groq Chat API)
+================================================================================
+
+API Details:
+  - Endpoint: https://api.groq.com/openai/v1/chat/completions
+  - Model: (specified in GroqService, typically mixtral or similar)
+  - Auth: Bearer token (API key in secrets/config)
+
+Prompt Engineering:
+  - System prompt includes:
+	* Role definition (AI architect assistant)
+	* Available tools catalog
+	* Spatial constraints (furniture layout rules)
+	* Revit native family names
+	* Coordinate system rules (Cartesian, strict spacing)
+	* Collision avoidance guidelines
+	* Perimeter placement rules for doors/windows
+
+Tool Calling Flow:
+  1. User inputs command (natural language) → MainWindow
+  2. MainWindow sends system prompt + tools + user input → Groq
+  3. Groq returns tool_calls (JSON) or text_response
+  4. GroqService parses tool_calls → RevitToolExecutor
+  5. RevitToolExecutor maps to dispatcher methods
+  6. Dispatcher queues external events → Revit handlers execute
+  7. Handlers log details + return result strings
+  8. Results shown in UI
+
+Units:
+  - User-facing: METERS
+  - Revit internal: Decimal feet (converted via UnitUtils)
+  - Handlers auto-convert meter inputs to internal units
+
+================================================================================
+5. ARCHITECTURAL PATTERNS
+================================================================================
+
+5.1 External Event Pattern (Revit Safety)
+──────────────────────────────────────────
+Why: Revit API is not thread-safe; all operations must run on main thread.
+
+Implementation:
+  - Each handler implements IExternalEventHandler
+  - RevitCommandDispatcher creates ExternalEvent wrappers
+  - UI sets handler properties → raises event → polls for result
+  - EsperarResultado() helper waits with timeout
+
+5.2 Singleton Logger
+────────────────────
+  - RevitAILogger uses double-checked locking
+  - Initialize() called once (idempotent)
+  - All handlers call RevitAILogger.Info/Warn/Error/Debug
+  - Close() called on app shutdown
+
+5.3 Tool Definition → Executor → Dispatcher → Handler Chain
+────────────────────────────────────────────────────────────
+  ToolDefinitions (schema) 
+	→ GroqService (LLM exposure)
+	→ RevitToolExecutor (routing + parsing)
+	→ IRevitCommandDispatcher (interface)
+	→ RevitCommandDispatcher (queue + event)
+	→ IExternalEventHandler (Revit execution)
+
+================================================================================
+6. KEY TECHNICAL DECISIONS
+================================================================================
+
+1. Serilog for Logging
+   - Structured, multi-sink, easy filtering
+   - Production-ready + performant
+
+2. Groq API Choice
+   - Fast inference, multi-model support
+   - Tool calling capability (native JSON schema support)
+
+3. ExternalEvent-based Dispatch
+   - Only safe way to call Revit API from UI thread
+   - Avoids crashes/freezes in Revit
+
+4. Family Fallback Strategy
+   - If requested type not found → use first available symbol
+   - Prevents command failure on missing family
+   - Logged as Warn for visibility
+
+5. Nearest-Wall Host Finding
+   - Uses LocationCurve.Curve.Project(point) for proximity
+   - Avoids invalid/complex Revit geometry APIs
+   - Simple, reliable, works across versions
+
+6. Metric System (Meters)
+   - UI/AI uses meters for clarity
+   - Automatic conversion to Revit internal units
+   - Consistent across all placement commands
+
+================================================================================
+7. DATA FLOW EXAMPLE (User Command → Revit)
+================================================================================
+
+User: "Crea una puerta de vidrio en las coordenadas 5,3"
+	   (Create a glass door at coordinates 5,3)
+
+Flow:
+  1. MainWindow receives input
+  2. Builds system prompt (spatial rules, available tools)
+  3. Sends to Groq: 
+	 {
+	   "system": [...constraint rules...],
+	   "messages": [{"role": "user", "content": "..."}],
+	   "tools": [{"name": "ColocarPuerta", "parameters": {...}}, ...]
+	 }
+  4. Groq responds:
+	 {
+	   "choices": [{
+		 "message": {
+		   "tool_calls": [{
+			 "function": {
+			   "name": "ColocarPuerta",
+			   "arguments": "{\"tipoPuerta\":\"Glass Door\",\"x\":5.0,\"y\":3.0}"
+			 }
+		   }]
+		 }
+	   }]
+	 }
+  5. GroqService parses → RevitToolExecutor extracts args
+  6. RevitToolExecutor.ExecuteColocarPuertaAsync("Glass Door", 5.0, 3.0)
+  7. Dispatcher.ColocarPuerta("Glass Door", 5.0, 3.0)
+  8. Creates ColocarPuertaHandler, sets properties, queues ExternalEvent
+  9. Handler runs on Revit main thread:
+	 - Converts 5.0m, 3.0m to internal units (feet)
+	 - Searches OST_Doors for "Glass Door" family
+	 - Finds nearest wall to (5, 3) point
+	 - Calls doc.Create.NewFamilyInstance(point, symbol, wall, NonStructural)
+	 - Logs: "✅ Puerta colocada: Glass Door en X=5m, Y=3m (Duracion: 142ms)"
+  10. Result string returned to UI, displayed to user
+
+Logs generated during this operation:
+  - revit-ai-2025-01-15.log: [Info] Iniciando ColocarPuerta...
+  - revit-ai-2025-01-15.log: [Debug] Familia encontrada: Doors:Glass Door
+  - revit-ai-2025-01-15.log: [Info] ✅ Puerta colocada...
+
+================================================================================
+8. CURRENT PROJECT STATUS
+================================================================================
+
+✅ COMPLETED:
+  - 6 core Revit commands (Create wall, room, door, window, furniture, read elements)
+  - System prompt with advanced spatial constraints
+  - Tool definitions with JSON schemas
+  - Groq integration with tool calling
+  - ExternalEvent-based command dispatch
+  - Centralized logging (Serilog) with 3 sinks
+  - Handler instrumentation (Info/Warn/Debug/Error + Stopwatch timing)
+  - Daily rotating log files with retention policies
+
+⚙️ IN PROGRESS / FUTURE:
+  - Performance profiling of placement algorithms
+  - Advanced collision detection for furniture
+  - Multi-room complex scenarios
+  - Custom family template system
+  - UI enhancements (preview, undo/redo)
+  - Configuration file for spatial rules (externalized constraints)
+
+🔴 KNOWN LIMITATIONS:
+  - Single-room operations (no complex multi-room dependencies)
+  - No real-time preview in Revit viewport
+  - Family search is name-based (no metadata filtering)
+  - Wall host search uses simple proximity (not geometric intersection)
+
+================================================================================
+9. BUILD & DEPENDENCIES
+================================================================================
+
+NuGet Packages Installed:
+  - Serilog 4.3.1
+  - Serilog.Sinks.Console 6.1.1
+  - Serilog.Sinks.File 7.0.0
+  - [Revit API references from Revit 2026 SDK]
+
+Build Status: ✅ Compilation Successful (No errors/warnings)
+
+Target Frameworks:
+  - RevitAIPlugin.UI: net8.0-windows (WPF)
+  - Revit_AIPlugin: net8.0
+
+================================================================================
+10. KEY FILES REFERENCE
+================================================================================
+
+UI Project (RevitAIPlugin.UI/):
+  RevitAIPlugin.UI/
+  ├── MainWindow.xaml
+  ├── MainWindow.xaml.cs           [Main UI orchestrator]
+  ├── App.xaml.cs                  [Application entry point]
+  ├── AI/
+  │   ├── PromptTemplates.cs       [System prompt builder + constraints]
+  │   └── ToolDefinitions.cs       [Tool schemas (6 commands)]
+  ├── Services/
+  │   ├── GroqService.cs           [Groq API HTTP client]
+  │   └── RevitToolExecutor.cs     [Tool routing + arg parsing]
+  └── Abstractions/
+	  └── IRevitCommandDispatcher.cs [Command interface contract]
+
+Backend Project (Revit_AIPlugin/):
+  Revit_AIPlugin/
+  ├── Revit/
+  │   ├── RevitCommandDispatcher.cs [Dispatcher implementation]
+  │   └── Tools/
+  │       ├── CrearMuroHandler.cs
+  │       ├── LeerElementosHandler.cs
+  │       ├── CrearHabitacionEstructuradaHandler.cs
+  │       ├── ColocarMobiliarioHandler.cs
+  │       ├── ColocarPuertaHandler.cs
+  │       └── ColocarVentanaHandler.cs
+  └── Logging/
+	  └── RevitAILogger.cs          [Centralized Serilog facade]
+
+================================================================================
+11. LOGGING OUTPUT EXAMPLE
+================================================================================
+
+When a user command is executed, logs appear in:
+  %LocalAppData%\RevitAIPlugin\logs\revit-ai-2025-01-15.log
+
+Example entries:
+  [2025-01-15 14:23:45.123] [INF] ═══════════════════════════════════════
+  [2025-01-15 14:23:45.124] [INF] Iniciando ColocarPuerta: TipoPuerta=Glass Door, X=5.0m, Y=3.0m
+  [2025-01-15 14:23:45.234] [DBG] Punto convertido a unidades internas: (16.4042, 9.8425)
+  [2025-01-15 14:23:45.245] [DBG] Familia encontrada: Doors:Glass Door
+  [2025-01-15 14:23:45.289] [DBG] Muro anfitrión encontrado: ID=41234, Distancia=0.15m
+  [2025-01-15 14:23:45.312] [INF] ✅ Puerta colocada exitosamente: Doors:Glass Door en X=5.0m, Y=3.0m (Duracion: 189ms)
+
+Errors logged to:
+  %LocalAppData%\RevitAIPlugin\logs\errors-2025-01-15.log
+  (same timestamp + exception stack trace for quick debugging)
+
+================================================================================
+12. HOW TO EXTEND
+================================================================================
+
+Adding a New Revit Command (e.g., ColocarViga/Place Beam):
+
+1. Add Tool Definition (ToolDefinitions.cs):
+   public static ToolDefinition ColocarViga => new(
+	 "ColocarViga",
+	 "Coloca una viga estructural",
+	 new { tipoViga = "string", x = "double", y = "double", ... }
+   );
+
+2. Add Dispatcher Method (IRevitCommandDispatcher.cs):
+   Task<string> ColocarViga(string tipoViga, double x, double y);
+
+3. Implement in Dispatcher (RevitCommandDispatcher.cs):
+   public Task<string> ColocarViga(string tipoViga, double x, double y) { ... }
+
+4. Create Handler (Tools/ColocarVigaHandler.cs):
+   public class ColocarVigaHandler : IExternalEventHandler { ... }
+
+5. Add Executor Route (RevitToolExecutor.cs):
+   case "ColocarViga":
+	 return await ExecuteColocarVigaAsync(args);
+
+6. Update Prompt (PromptTemplates.cs):
+   Add ColocarViga to tool hints and spatial constraints if needed.
+
+7. Test & log entries will automatically be generated via RevitAILogger.
+
+================================================================================
+13. CONTACT & NOTES
+================================================================================
+
+Developer: [User]
+Repository: https://github.com/Felglitch739/Revit_AIPlugin
+Branch: master
+Last Updated: 2025-01-15
+
+Notes:
+  - Logging is production-ready with rotation and retention
+  - All handlers are instrumented with timing + context logging
+  - System prompt is externalized and editable for AI behavior tuning
+  - ExternalEvent pattern ensures Revit API safety
+  - UnitUtils handles meter→feet conversions automatically
+
+================================================================================
+END OF PROJECT CONTEXT
+================================================================================

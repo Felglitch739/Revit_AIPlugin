@@ -1,41 +1,51 @@
+#nullable disable
 using System;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Revit_AIPlugin.Logging;
 
 namespace RevitAIPlugin.Revit.Tools
 {
     /// <summary>
     /// Handler que se ejecuta en el hilo principal de Revit para crear un muro.
     /// </summary>
+
     public class CrearMuroHandler : IExternalEventHandler
     {
-        // Parámetros de entrada (seteados antes de Raise())
-        public string Nivel { get; set; }
-        public double Longitud { get; set; }
-        public double Altura { get; set; }
-        public string TipoMuro { get; set; }
-
-        // Resultado de salida (leído después de que Execute termine)
-        public string Resultado { get; set; }
+        // Valores por defecto para silenciar CS8618
+        public string Nivel { get; set; } = "Level 1";
+        public double Longitud { get; set; } = 5.0;
+        public double Altura { get; set; } = 3.0;
+        public string TipoMuro { get; set; } = "";
+        public string Resultado { get; set; } = null;
+        public TaskCompletionSource<string> TaskCompletionSource { get; set; }
 
         public void Execute(UIApplication app)
         {
+            var stopwatch = Stopwatch.StartNew();
             try
             {
+                RevitAILogger.Info("Iniciando CrearMuro: Longitud={Longitud}m, Altura={Altura}m, TipoMuro={TipoMuro}, Nivel={Nivel}",
+                    Longitud, Altura, TipoMuro, Nivel);
+
                 Document doc = app.ActiveUIDocument.Document;
 
-                // 1. Buscar el nivel por nombre (case-insensitive)
+                // Buscar nivel por nombre
                 Level nivel = new FilteredElementCollector(doc)
                     .OfClass(typeof(Level))
                     .Cast<Level>()
                     .FirstOrDefault(l =>
                         l.Name.Equals(Nivel, StringComparison.OrdinalIgnoreCase) ||
-                        l.Name.Contains(Nivel, StringComparison.OrdinalIgnoreCase));
+                        l.Name.IndexOf(Nivel, StringComparison.OrdinalIgnoreCase) >= 0);
 
+                // Fallback: primer nivel disponible
                 if (nivel == null)
                 {
-                    // Si no se encuentra, usar el primer nivel disponible
+                    RevitAILogger.Warn("No se encontró nivel '{Nivel}'. Usando primer nivel disponible.", Nivel);
+
                     nivel = new FilteredElementCollector(doc)
                         .OfClass(typeof(Level))
                         .Cast<Level>()
@@ -44,22 +54,32 @@ namespace RevitAIPlugin.Revit.Tools
 
                     if (nivel == null)
                     {
-                        Resultado = $"Error: No se encontraron niveles en el modelo.";
+                        RevitAILogger.Error(null, "No se encontraron niveles en el modelo");
+                        Resultado = "Error: No se encontraron niveles en el modelo.";
                         return;
                     }
                 }
 
-                // 2. Buscar el tipo de muro
-                WallType tipoMuroObj = new FilteredElementCollector(doc)
-                    .OfClass(typeof(WallType))
-                    .Cast<WallType>()
-                    .FirstOrDefault(wt =>
-                        !string.IsNullOrEmpty(TipoMuro) &&
-                        wt.Name.Contains(TipoMuro, StringComparison.OrdinalIgnoreCase));
+                RevitAILogger.Debug("Nivel encontrado: {LevelName}", nivel.Name);
 
-                // Si no se encuentra el tipo específico, usar el primero disponible
+                // Buscar tipo de muro
+                WallType tipoMuroObj = null;
+
+                if (!string.IsNullOrEmpty(TipoMuro))
+                {
+                    tipoMuroObj = new FilteredElementCollector(doc)
+                        .OfClass(typeof(WallType))
+                        .Cast<WallType>()
+                        .FirstOrDefault(wt =>
+                            wt.Name.IndexOf(TipoMuro, StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+
+                // Fallback: primer tipo disponible
                 if (tipoMuroObj == null)
                 {
+                    if (!string.IsNullOrEmpty(TipoMuro))
+                        RevitAILogger.Warn("No se encontró tipo de muro '{TipoMuro}'. Usando tipo por defecto.", TipoMuro);
+
                     tipoMuroObj = new FilteredElementCollector(doc)
                         .OfClass(typeof(WallType))
                         .Cast<WallType>()
@@ -68,30 +88,61 @@ namespace RevitAIPlugin.Revit.Tools
 
                 if (tipoMuroObj == null)
                 {
-                    Resultado = "Error: No se encontraron tipos de muro en el documento.";
+                    RevitAILogger.Error(null, "No se encontraron tipos de muro en el proyecto");
+                    Resultado = "Error: No se encontraron tipos de muro en el proyecto.";
                     return;
                 }
 
-                // 3. Crear el muro (línea simple en el nivel encontrado)
-                using (Transaction t = new Transaction(doc, "Crear Muro desde IA"))
+                RevitAILogger.Debug("Tipo de muro encontrado: {WallTypeName}", tipoMuroObj.Name);
+
+                // Convertir metros → pies (unidad interna de Revit)
+                double longitudPies = UnitUtils.ConvertToInternalUnits(Longitud, UnitTypeId.Meters);
+                double alturaReal = Altura > 0 ? Altura : 3.0;
+                double alturaPies = UnitUtils.ConvertToInternalUnits(alturaReal, UnitTypeId.Meters);
+
+                RevitAILogger.Debug("Dimensiones convertidas: Longitud={LongPies}, Altura={AltPies}",
+                    longitudPies, alturaPies);
+
+                XYZ puntoInicio = new XYZ(0, 0, nivel.Elevation);
+                XYZ puntoFin = new XYZ(longitudPies, 0, nivel.Elevation);
+                Line lineaMuro = Line.CreateBound(puntoInicio, puntoFin);
+
+                RevitAILogger.Debug("Línea de muro creada: P1={P1}, P2={P2}", puntoInicio, puntoFin);
+
+                using (Transaction tx = new Transaction(doc, "Crear Muro - AI Plugin"))
                 {
-                    t.Start();
+                    tx.Start();
 
-                    // Crear una línea recta en el origen con la longitud solicitada
-                    XYZ p1 = new XYZ(0, 0, 0);
-                    XYZ p2 = new XYZ(Longitud, 0, 0);
-                    Line line = Line.CreateBound(p1, p2);
+                    Wall muroCreado = Wall.Create(
+                        doc,
+                        lineaMuro,
+                        tipoMuroObj.Id,
+                        nivel.Id,
+                        alturaPies,
+                        0,
+                        false,
+                        false
+                    );
 
-                    Wall wall = Wall.Create(doc, line, tipoMuroObj.Id, nivel.Id, Altura, 0, false, false);
+                    tx.Commit();
 
-                    t.Commit();
+                    stopwatch.Stop();
+                    RevitAILogger.Info("✅ Muro creado exitosamente. Tipo: {WallType}, Nivel: {Level}, Longitud: {Length}m, Altura: {Height}m, ID: {WallId} (Duracion: {Ms}ms)",
+                        tipoMuroObj.Name, nivel.Name, Longitud, alturaReal, muroCreado.Id.Value, stopwatch.ElapsedMilliseconds);
+
+                    Resultado = $"✅ Muro creado exitosamente.\n" +
+                                $"• Tipo: {tipoMuroObj.Name}\n" +
+                                $"• Nivel: {nivel.Name}\n" +
+                                $"• Longitud: {Longitud}m\n" +
+                                $"• Altura: {alturaReal}m\n" +
+                                $"• ID del elemento: {muroCreado.Id.Value}";
                 }
-
-                Resultado = $"Muro creado: longitud={Longitud}m, altura={Altura}m, tipo={(tipoMuroObj?.Name ?? "(default)")}";
             }
             catch (Exception ex)
             {
-                Resultado = $"Error CrearMuroHandler: {ex.Message}";
+                stopwatch.Stop();
+                RevitAILogger.Error(ex, "Error al crear muro (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
+                Resultado = $"Error al crear muro: {ex.Message}";
             }
         }
 

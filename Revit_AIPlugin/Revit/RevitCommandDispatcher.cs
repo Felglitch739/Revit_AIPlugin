@@ -2,82 +2,173 @@ using System;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
 using RevitAIPlugin.Revit.Tools;
+using RevitAIPlugin.UI;
 
-namespace RevitAIPlugin.Revit
+namespace Revit_AIPlugin
 {
-    /// <summary>
-    /// Puente entre el hilo async de la IA y el hilo principal de Revit.
-    /// Usa ExternalEvent para ejecutar código de Revit API de forma segura.
-    /// </summary>
-    public class RevitCommandDispatcher
+    public class RevitCommandDispatcher : IRevitCommandDispatcher
     {
         private readonly UIApplication _uiApp;
         private readonly CrearMuroHandler _crearMuroHandler;
         private readonly LeerElementosHandler _leerElementosHandler;
-
+        private readonly CrearHabitacionEstructuradaHandler _crearHabitacionHandler;
+        private readonly ColocarMobiliarioHandler _colocarMobiliarioHandler;
+        private readonly ColocarPuertaHandler _colocarPuertaHandler;
+        private readonly ColocarVentanaHandler _colocarVentanaHandler;
         private readonly ExternalEvent _crearMuroEvent;
-        private readonly ExternalEvent _leerElementosEvent; 
+        private readonly ExternalEvent _leerElementosEvent;
+        private readonly ExternalEvent _crearHabitacionEvent;
+        private readonly ExternalEvent _colocarMobiliarioEvent;
+        private readonly ExternalEvent _colocarPuertaEvent;
+        private readonly ExternalEvent _colocarVentanaEvent;
 
         public RevitCommandDispatcher(UIApplication uiApp)
         {
             _uiApp = uiApp;
-
             _crearMuroHandler = new CrearMuroHandler();
             _leerElementosHandler = new LeerElementosHandler();
-
+            _crearHabitacionHandler = new CrearHabitacionEstructuradaHandler();
+            _colocarMobiliarioHandler = new ColocarMobiliarioHandler();
+            _colocarPuertaHandler = new ColocarPuertaHandler();
+            _colocarVentanaHandler = new ColocarVentanaHandler();
             _crearMuroEvent = ExternalEvent.Create(_crearMuroHandler);
             _leerElementosEvent = ExternalEvent.Create(_leerElementosHandler);
+            _crearHabitacionEvent = ExternalEvent.Create(_crearHabitacionHandler);
+            _colocarMobiliarioEvent = ExternalEvent.Create(_colocarMobiliarioHandler);
+            _colocarPuertaEvent = ExternalEvent.Create(_colocarPuertaHandler);
+            _colocarVentanaEvent = ExternalEvent.Create(_colocarVentanaHandler);
         }
 
-        /// <summary>
-        /// Solicita crear un muro y espera el resultado de forma async.
-        /// </summary>
-        public async Task<string> CrearMuro(string nivel, double longitud, double altura, string tipoMuro)
+        public Task<string> CrearMuro(string nivel, double longitud, double altura, string tipoMuro)
         {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _crearMuroHandler.TaskCompletionSource = tcs;
             _crearMuroHandler.Nivel = nivel;
             _crearMuroHandler.Longitud = longitud;
             _crearMuroHandler.Altura = altura;
             _crearMuroHandler.TipoMuro = tipoMuro;
             _crearMuroHandler.Resultado = null;
 
-            _crearMuroEvent.Raise();
+            try
+            {
+                _crearMuroEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _crearMuroHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento CrearMuro: {ex.Message}");
+            }
 
-            // Esperar hasta que Revit procese el evento (máx. 10 segundos)
-            return await EsperarResultado(() => _crearMuroHandler.Resultado);
+            return tcs.Task;
         }
 
-        /// <summary>
-        /// Solicita leer elementos del modelo y espera el resultado.
-        /// </summary>
-        public async Task<string> LeerElementos(string categoria)
+        public Task<string> LeerElementos(string categoria)
         {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _leerElementosHandler.TaskCompletionSource = tcs;
             _leerElementosHandler.Categoria = categoria;
             _leerElementosHandler.Resultado = null;
 
-            _leerElementosEvent.Raise();
-
-            return await EsperarResultado(() => _leerElementosHandler.Resultado);
-        }
-
-        /// <summary>
-        /// Polling async que espera a que un handler de Revit complete su tarea.
-        /// </summary>
-        private async Task<string> EsperarResultado(Func<string> obtenerResultado, int timeoutMs = 10000)
-        {
-            int elapsed = 0;
-            const int intervalo = 100;
-
-            while (elapsed < timeoutMs)
+            try
             {
-                string resultado = obtenerResultado();
-                if (resultado != null)
-                    return resultado;
-
-                await Task.Delay(intervalo);
-                elapsed += intervalo;
+                _leerElementosEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _leerElementosHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento LeerElementos: {ex.Message}");
             }
 
-            return "Error: Timeout al esperar respuesta de Revit.";
+            return tcs.Task;
+        }
+
+        public Task<string> CrearHabitacionEstructurada(string nivel, double ancho, double largo, double altura)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _crearHabitacionHandler.TaskCompletionSource = tcs;
+            _crearHabitacionHandler.Nivel = nivel;
+            _crearHabitacionHandler.Ancho = ancho;
+            _crearHabitacionHandler.Largo = largo;
+            _crearHabitacionHandler.Altura = altura;
+            _crearHabitacionHandler.Resultado = null;
+
+            try
+            {
+                _crearHabitacionEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _crearHabitacionHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento CrearHabitacionEstructurada: {ex.Message}");
+            }
+
+            return tcs.Task;
+        }
+
+        public Task<string> ColocarMobiliario(string tipoMueble, double x, double y)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _colocarMobiliarioHandler.TaskCompletionSource = tcs;
+            _colocarMobiliarioHandler.TipoMueble = tipoMueble;
+            _colocarMobiliarioHandler.X = x;
+            _colocarMobiliarioHandler.Y = y;
+            _colocarMobiliarioHandler.Resultado = null;
+
+            try
+            {
+                _colocarMobiliarioEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _colocarMobiliarioHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento ColocarMobiliario: {ex.Message}");
+            }
+
+            return tcs.Task;
+        }
+
+        public Task<string> ColocarPuerta(string tipoPuerta, double x, double y)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _colocarPuertaHandler.TaskCompletionSource = tcs;
+            _colocarPuertaHandler.TipoPuerta = tipoPuerta;
+            _colocarPuertaHandler.X = x;
+            _colocarPuertaHandler.Y = y;
+            _colocarPuertaHandler.Resultado = null;
+
+            try
+            {
+                _colocarPuertaEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _colocarPuertaHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento ColocarPuerta: {ex.Message}");
+            }
+
+            return tcs.Task;
+        }
+
+        public Task<string> ColocarVentana(string tipoVentana, double x, double y)
+        {
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _colocarVentanaHandler.TaskCompletionSource = tcs;
+            _colocarVentanaHandler.TipoVentana = tipoVentana;
+            _colocarVentanaHandler.X = x;
+            _colocarVentanaHandler.Y = y;
+            _colocarVentanaHandler.Resultado = null;
+
+            try
+            {
+                _colocarVentanaEvent.Raise();
+            }
+            catch (Exception ex)
+            {
+                _colocarVentanaHandler.TaskCompletionSource = null;
+                return Task.FromResult($"Error al disparar evento ColocarVentana: {ex.Message}");
+            }
+
+            return tcs.Task;
         }
     }
 }
