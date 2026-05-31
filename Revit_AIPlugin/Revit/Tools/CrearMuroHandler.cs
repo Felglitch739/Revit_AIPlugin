@@ -26,6 +26,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando CrearMuro: Longitud={Longitud}m, Altura={Altura}m, TipoMuro={TipoMuro}, Nivel={Nivel}",
@@ -142,7 +143,13 @@ namespace RevitAIPlugin.Revit.Tools
             {
                 stopwatch.Stop();
                 RevitAILogger.Error(ex, "Error al crear muro (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error al crear muro: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
+            }
+            finally
+            {
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
+                TaskCompletionSource = null;
             }
         }
 

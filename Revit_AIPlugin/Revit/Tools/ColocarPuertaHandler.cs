@@ -25,6 +25,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando ColocarPuerta: TipoPuerta={TipoPuerta}, X={X}m, Y={Y}m", TipoPuerta, X, Y);
@@ -97,12 +98,13 @@ namespace RevitAIPlugin.Revit.Tools
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                Resultado = $"Error al colocar puerta: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
                 RevitAILogger.Error(ex, "Error al colocar puerta (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: sin resultado.");
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
                 TaskCompletionSource = null;
             }
         }

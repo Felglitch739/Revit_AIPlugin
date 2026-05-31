@@ -24,6 +24,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando CrearHabitacionEstructurada: Ancho={Ancho}m, Largo={Largo}m, Altura={Altura}m, Nivel={Nivel}",
@@ -112,11 +113,12 @@ namespace RevitAIPlugin.Revit.Tools
             {
                 stopwatch.Stop();
                 RevitAILogger.Error(ex, "Error al crear la habitación (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error al crear la habitación: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: sin resultado.");
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
                 TaskCompletionSource = null;
             }
         }

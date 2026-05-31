@@ -24,6 +24,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando ColocarMobiliario: TipoMueble={TipoMueble}, X={X}m, Y={Y}m",
@@ -89,11 +90,12 @@ namespace RevitAIPlugin.Revit.Tools
             {
                 stopwatch.Stop();
                 RevitAILogger.Error(ex, "Error al colocar mobiliario (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error al colocar mobiliario: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: sin resultado.");
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
                 TaskCompletionSource = null;
             }
         }

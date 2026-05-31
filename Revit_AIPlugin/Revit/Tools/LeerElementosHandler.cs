@@ -40,6 +40,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando LeerElementos: Categoria={Categoria}", Categoria);
@@ -60,8 +61,6 @@ namespace RevitAIPlugin.Revit.Tools
                     .OfCategory(bic)
                     .WhereElementIsNotElementType()
                     .ToList();
-
-                stopwatch.Stop();
 
                 if (!elementos.Any())
                 {
@@ -96,11 +95,12 @@ namespace RevitAIPlugin.Revit.Tools
             {
                 stopwatch.Stop();
                 RevitAILogger.Error(ex, "Error en LeerElementosHandler (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error LeerElementosHandler: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: sin resultado.");
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
                 TaskCompletionSource = null;
             }
         }

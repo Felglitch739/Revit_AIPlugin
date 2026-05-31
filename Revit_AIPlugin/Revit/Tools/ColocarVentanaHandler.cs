@@ -25,6 +25,7 @@ namespace RevitAIPlugin.Revit.Tools
         public void Execute(UIApplication app)
         {
             var stopwatch = Stopwatch.StartNew();
+            Resultado = null;
             try
             {
                 RevitAILogger.Info("Iniciando ColocarVentana: TipoVentana={TipoVentana}, X={X}m, Y={Y}m",
@@ -35,7 +36,9 @@ namespace RevitAIPlugin.Revit.Tools
                 // Convertir coordenadas de metros a unidades internas de Revit (pies)
                 double xInternal = UnitUtils.ConvertToInternalUnits(X, UnitTypeId.Meters);
                 double yInternal = UnitUtils.ConvertToInternalUnits(Y, UnitTypeId.Meters);
-                XYZ puntoVentana = new XYZ(xInternal, yInternal, 0);
+
+                Level nivelActual = ObtenerNivelActual(doc);
+                XYZ puntoVentana = new XYZ(xInternal, yInternal, nivelActual.Elevation);
 
                 RevitAILogger.Debug("Punto convertido a unidades internas: {Punto}", puntoVentana);
 
@@ -70,8 +73,6 @@ namespace RevitAIPlugin.Revit.Tools
                 RevitAILogger.Debug("Familia encontrada: {FamilyName}:{SymbolName}",
                     simboloVentana.Family.Name, simboloVentana.Name);
 
-                Level nivelActual = ObtenerNivelActual(doc);
-
                 // Buscar el muro más cercano a las coordenadas especificadas
                 Wall muroHost = EncontrarMuroMasCercano(doc, puntoVentana, nivelActual);
 
@@ -94,7 +95,7 @@ namespace RevitAIPlugin.Revit.Tools
                 }
 
                 // Crear instancia de familia con el muro como anfitrión
-                doc.Create.NewFamilyInstance(puntoVentana, simboloVentana, muroHost, StructuralType.NonStructural);
+                doc.Create.NewFamilyInstance(puntoVentana, simboloVentana, muroHost, nivelActual, StructuralType.NonStructural);
 
                 tx.Commit();
 
@@ -108,11 +109,12 @@ namespace RevitAIPlugin.Revit.Tools
             {
                 stopwatch.Stop();
                 RevitAILogger.Error(ex, "Error al colocar ventana (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error al colocar ventana: {ex.Message}";
+                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: sin resultado.");
+                stopwatch.Stop();
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
                 TaskCompletionSource = null;
             }
         }
