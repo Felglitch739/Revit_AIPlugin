@@ -11,12 +11,12 @@ namespace Revit_AIPlugin
         private readonly UIApplication _uiApp;
 
         // ── Handlers ──────────────────────────────────────────────────────────
-        private readonly CrearMuroHandler _crearMuroHandler;
-        private readonly LeerElementosHandler _leerElementosHandler;
-        private readonly CrearHabitacionEstructuradaHandler _crearHabitacionHandler;
-        private readonly ColocarMobiliarioHandler _colocarMobiliarioHandler;
-        private readonly ColocarPuertaHandler _colocarPuertaHandler;
-        private readonly ColocarVentanaHandler _colocarVentanaHandler;
+        private readonly CrearMuroHandler                    _crearMuroHandler;
+        private readonly LeerElementosHandler                _leerElementosHandler;
+        private readonly CrearHabitacionEstructuradaHandler  _crearHabitacionHandler;
+        private readonly ColocarMobiliarioHandler            _colocarMobiliarioHandler;
+        private readonly ColocarPuertaHandler                _colocarPuertaHandler;
+        private readonly ColocarVentanaHandler               _colocarVentanaHandler;
 
         // ── ExternalEvents ────────────────────────────────────────────────────
         private readonly ExternalEvent _crearMuroEvent;
@@ -33,19 +33,19 @@ namespace Revit_AIPlugin
         {
             _uiApp = uiApp;
 
-            _crearMuroHandler = new CrearMuroHandler();
-            _leerElementosHandler = new LeerElementosHandler();
-            _crearHabitacionHandler = new CrearHabitacionEstructuradaHandler();
-            _colocarMobiliarioHandler = new ColocarMobiliarioHandler();
-            _colocarPuertaHandler = new ColocarPuertaHandler();
-            _colocarVentanaHandler = new ColocarVentanaHandler();
+            _crearMuroHandler            = new CrearMuroHandler();
+            _leerElementosHandler        = new LeerElementosHandler();
+            _crearHabitacionHandler      = new CrearHabitacionEstructuradaHandler();
+            _colocarMobiliarioHandler    = new ColocarMobiliarioHandler();
+            _colocarPuertaHandler        = new ColocarPuertaHandler();
+            _colocarVentanaHandler       = new ColocarVentanaHandler();
 
-            _crearMuroEvent = ExternalEvent.Create(_crearMuroHandler);
-            _leerElementosEvent = ExternalEvent.Create(_leerElementosHandler);
-            _crearHabitacionEvent = ExternalEvent.Create(_crearHabitacionHandler);
-            _colocarMobiliarioEvent = ExternalEvent.Create(_colocarMobiliarioHandler);
-            _colocarPuertaEvent = ExternalEvent.Create(_colocarPuertaHandler);
-            _colocarVentanaEvent = ExternalEvent.Create(_colocarVentanaHandler);
+            _crearMuroEvent              = ExternalEvent.Create(_crearMuroHandler);
+            _leerElementosEvent          = ExternalEvent.Create(_leerElementosHandler);
+            _crearHabitacionEvent        = ExternalEvent.Create(_crearHabitacionHandler);
+            _colocarMobiliarioEvent      = ExternalEvent.Create(_colocarMobiliarioHandler);
+            _colocarPuertaEvent          = ExternalEvent.Create(_colocarPuertaHandler);
+            _colocarVentanaEvent         = ExternalEvent.Create(_colocarVentanaHandler);
         }
 
         // =====================================================================
@@ -105,14 +105,14 @@ namespace Revit_AIPlugin
             return Despachar(
                 preparar: () =>
                 {
-                    _crearMuroHandler.Nivel = nivel;
-                    _crearMuroHandler.Longitud = longitud;
-                    _crearMuroHandler.Altura = altura;
-                    _crearMuroHandler.TipoMuro = tipoMuro;
+                    _crearMuroHandler.Nivel     = nivel;
+                    _crearMuroHandler.Longitud  = longitud;
+                    _crearMuroHandler.Altura    = altura;
+                    _crearMuroHandler.TipoMuro  = tipoMuro;
                     _crearMuroHandler.Resultado = null;
                 },
                 handler: _crearMuroHandler,
-                evento: _crearMuroEvent);
+                evento:  _crearMuroEvent);
         }
 
         public Task<string> LeerElementos(string categoria)
@@ -124,7 +124,7 @@ namespace Revit_AIPlugin
                     _leerElementosHandler.Resultado = null;
                 },
                 handler: _leerElementosHandler,
-                evento: _leerElementosEvent);
+                evento:  _leerElementosEvent);
         }
 
         public Task<string> CrearHabitacionEstructurada(
@@ -133,14 +133,14 @@ namespace Revit_AIPlugin
             return Despachar(
                 preparar: () =>
                 {
-                    _crearHabitacionHandler.Nivel = nivel;
-                    _crearHabitacionHandler.Ancho = ancho;
-                    _crearHabitacionHandler.Largo = largo;
-                    _crearHabitacionHandler.Altura = altura;
+                    _crearHabitacionHandler.Nivel    = nivel;
+                    _crearHabitacionHandler.Ancho    = ancho;
+                    _crearHabitacionHandler.Largo    = largo;
+                    _crearHabitacionHandler.Altura   = altura;
                     _crearHabitacionHandler.Resultado = null;
                 },
                 handler: _crearHabitacionHandler,
-                evento: _crearHabitacionEvent);
+                evento:  _crearHabitacionEvent);
         }
 
         public Task<string> ColocarMobiliario(
@@ -150,12 +150,12 @@ namespace Revit_AIPlugin
                 preparar: () =>
                 {
                     _colocarMobiliarioHandler.TipoMueble = tipoMueble;
-                    _colocarMobiliarioHandler.X = x;
-                    _colocarMobiliarioHandler.Y = y;
-                    _colocarMobiliarioHandler.Resultado = null;
+                    _colocarMobiliarioHandler.X          = x;
+                    _colocarMobiliarioHandler.Y          = y;
+                    _colocarMobiliarioHandler.Resultado  = null;
                 },
                 handler: _colocarMobiliarioHandler,
-                evento: _colocarMobiliarioEvent);
+                evento:  _colocarMobiliarioEvent);
         }
 
         public Task<string> ColocarPuerta(
@@ -165,12 +165,12 @@ namespace Revit_AIPlugin
                 preparar: () =>
                 {
                     _colocarPuertaHandler.TipoPuerta = tipoPuerta;
-                    _colocarPuertaHandler.X = x;
-                    _colocarPuertaHandler.Y = y;
-                    _colocarPuertaHandler.Resultado = null;
+                    _colocarPuertaHandler.X          = x;
+                    _colocarPuertaHandler.Y          = y;
+                    _colocarPuertaHandler.Resultado  = null;
                 },
                 handler: _colocarPuertaHandler,
-                evento: _colocarPuertaEvent);
+                evento:  _colocarPuertaEvent);
         }
 
         public Task<string> ColocarVentana(
@@ -180,12 +180,12 @@ namespace Revit_AIPlugin
                 preparar: () =>
                 {
                     _colocarVentanaHandler.TipoVentana = tipoVentana;
-                    _colocarVentanaHandler.X = x;
-                    _colocarVentanaHandler.Y = y;
-                    _colocarVentanaHandler.Resultado = null;
+                    _colocarVentanaHandler.X           = x;
+                    _colocarVentanaHandler.Y           = y;
+                    _colocarVentanaHandler.Resultado   = null;
                 },
                 handler: _colocarVentanaHandler,
-                evento: _colocarVentanaEvent);
+                evento:  _colocarVentanaEvent);
         }
     }
 }

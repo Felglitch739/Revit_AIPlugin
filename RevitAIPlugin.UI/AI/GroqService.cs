@@ -74,6 +74,36 @@ namespace RevitAIPlugin.UI
                         type = "function",
                         function = new
                         {
+                            name = ToolDefinitions.CrearColumna.Name,
+                            description = ToolDefinitions.CrearColumna.Description,
+                            parameters = JsonDocument.Parse(ToolDefinitions.CrearColumna.JsonSchema).RootElement
+                        }
+                    },
+                    new
+                    {
+                        type = "function",
+                        function = new
+                        {
+                            name = ToolDefinitions.CrearViga.Name,
+                            description = ToolDefinitions.CrearViga.Description,
+                            parameters = JsonDocument.Parse(ToolDefinitions.CrearViga.JsonSchema).RootElement
+                        }
+                    },
+                    new
+                    {
+                        type = "function",
+                        function = new
+                        {
+                            name = ToolDefinitions.CrearTecho.Name,
+                            description = ToolDefinitions.CrearTecho.Description,
+                            parameters = JsonDocument.Parse(ToolDefinitions.CrearTecho.JsonSchema).RootElement
+                        }
+                    },
+                    new
+                    {
+                        type = "function",
+                        function = new
+                        {
                             name = ToolDefinitions.ColocarMobiliario.Name,
                             description = ToolDefinitions.ColocarMobiliario.Description,
                             parameters = JsonDocument.Parse(ToolDefinitions.ColocarMobiliario.JsonSchema).RootElement

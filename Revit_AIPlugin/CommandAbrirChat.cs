@@ -12,8 +12,7 @@ namespace Revit_AIPlugin
         {
             App.Instance.Initialize(commandData.Application);
 
-            var ventana = new MainWindow(App.Instance.Dispatcher);
-            ventana.Topmost = true;
+            var ventana = new MainWindow(App.Instance.Dispatcher);            ventana.Topmost = true;
             ventana.Show();
             return Result.Succeeded;
         }

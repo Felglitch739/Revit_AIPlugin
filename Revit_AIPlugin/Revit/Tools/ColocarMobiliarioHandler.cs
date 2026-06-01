@@ -1,19 +1,17 @@
 #nullable disable
 using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.DB.Structure;
-using Revit_AIPlugin.Logging;
 
 namespace RevitAIPlugin.Revit.Tools
 {
     /// <summary>
-    /// Coloca una familia de mobiliario en el modelo si existe cargada.
+    /// Handler para colocar mobiliario en el modelo.
     /// </summary>
-    public class ColocarMobiliarioHandler : IExternalEventHandler
+    public class ColocarMobiliarioHandler : IExternalEventHandler, IHandlerConTCS
     {
         public string TipoMueble { get; set; } = string.Empty;
         public double X { get; set; } = 0.0;
@@ -23,20 +21,42 @@ namespace RevitAIPlugin.Revit.Tools
 
         public void Execute(UIApplication app)
         {
-            var stopwatch = Stopwatch.StartNew();
             Resultado = null;
             try
             {
-                RevitAILogger.Info("Iniciando ColocarMobiliario: TipoMueble={TipoMueble}, X={X}m, Y={Y}m",
-                    TipoMueble, X, Y);
-
                 Document doc = app.ActiveUIDocument.Document;
-                XYZ puntoColocacion = new XYZ(
+                XYZ puntoPies = new XYZ(
                     UnitUtils.ConvertToInternalUnits(X, UnitTypeId.Meters),
                     UnitUtils.ConvertToInternalUnits(Y, UnitTypeId.Meters),
                     0);
 
-                RevitAILogger.Debug("Punto convertido a unidades internas: {Punto}", puntoColocacion);
+                Level nivel = app.ActiveUIDocument.ActiveView?.GenLevel;
+                if (nivel == null)
+                {
+                    nivel = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level))
+                        .Cast<Level>()
+                        .FirstOrDefault(l =>
+                            l.Name.Equals("L1", StringComparison.OrdinalIgnoreCase) ||
+                            l.Name.Equals("Level 1", StringComparison.OrdinalIgnoreCase) ||
+                            l.Name.IndexOf("L1", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            l.Name.IndexOf("Level 1", StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+
+                if (nivel == null)
+                {
+                    nivel = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level))
+                        .Cast<Level>()
+                        .OrderBy(l => l.Elevation)
+                        .FirstOrDefault();
+                }
+
+                if (nivel == null)
+                {
+                    Resultado = "Error: No hay niveles disponibles en el proyecto.";
+                    return;
+                }
 
                 FamilySymbol simbolo = new FilteredElementCollector(doc)
                     .OfCategory(BuiltInCategory.OST_Furniture)
@@ -48,8 +68,6 @@ namespace RevitAIPlugin.Revit.Tools
 
                 if (simbolo == null)
                 {
-                    RevitAILogger.Warn("No se encontró familia de mueble con tipo '{TipoMueble}'. Usando fallback.", TipoMueble);
-
                     simbolo = new FilteredElementCollector(doc)
                         .OfCategory(BuiltInCategory.OST_Furniture)
                         .OfClass(typeof(FamilySymbol))
@@ -59,43 +77,33 @@ namespace RevitAIPlugin.Revit.Tools
 
                 if (simbolo == null)
                 {
-                    RevitAILogger.Error(null, "No hay ninguna familia de mobiliario cargada en el proyecto");
                     Resultado = "Error: No hay ninguna familia de mobiliario cargada en este proyecto.";
                     return;
                 }
 
-                RevitAILogger.Debug("Familia encontrada: {FamilyName}:{SymbolName}",
-                    simbolo.Family.Name, simbolo.Name);
-
-                using Transaction tx = new Transaction(doc, "Colocar Mobiliario IA");
-                tx.Start();
-
-                if (!simbolo.IsActive)
+                using (Transaction tx = new Transaction(doc, "Colocar Mobiliario IA"))
                 {
-                    simbolo.Activate();
-                    doc.Regenerate();
+                    tx.Start();
+
+                    if (!simbolo.IsActive)
+                    {
+                        simbolo.Activate();
+                        doc.Regenerate();
+                    }
+
+                    doc.Create.NewFamilyInstance(puntoPies, simbolo, nivel, StructuralType.NonStructural);
+                    tx.Commit();
+
+                    Resultado = $"✅ Mobiliario colocado: '{simbolo.Family.Name} : {simbolo.Name}' en X={X}m, Y={Y}m.";
                 }
-
-                doc.Create.NewFamilyInstance(puntoColocacion, simbolo, StructuralType.NonStructural);
-
-                tx.Commit();
-
-                stopwatch.Stop();
-                RevitAILogger.Info("✅ Mobiliario colocado exitosamente: {Family}:{Symbol} en X={X}m, Y={Y}m (Duracion: {Ms}ms)",
-                    simbolo.Family.Name, simbolo.Name, X, Y, stopwatch.ElapsedMilliseconds);
-
-                Resultado = $"✅ Mobiliario colocado: '{simbolo.Family.Name} : {simbolo.Name}' en X={X}m, Y={Y}m.";
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
-                RevitAILogger.Error(ex, "Error al colocar mobiliario (Duracion: {Ms}ms)", stopwatch.ElapsedMilliseconds);
-                Resultado = $"Error Revit: {ex.GetType().Name} - {ex.Message}";
+                Resultado = ex.Message;
             }
             finally
             {
-                stopwatch.Stop();
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta del handler.");
+                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta.");
                 TaskCompletionSource = null;
             }
         }

@@ -25,15 +25,17 @@ namespace RevitAIPlugin.UI
         private readonly ObservableCollection<ChatMessage> _messages = new();
         private readonly IChatCompletionService? _chatService;
         private readonly IToolExecutor? _toolExecutor;
+        private readonly RevitTaskHandler _revitTaskHandler;
 
         private static string BuildSystemPrompt() => PromptTemplates.BuildSystemPrompt();
 
-        public MainWindow(IRevitCommandDispatcher? revitDispatcher)
+        public MainWindow(object? revitDispatcher)
         {
             InitializeComponent();
             messagesPanel.ItemsSource = _messages;
             _chatService = CrearChatService();
-            _toolExecutor = new RevitToolExecutor(revitDispatcher);
+            _revitTaskHandler = new RevitTaskHandler();
+            _toolExecutor = new RevitToolExecutor(revitDispatcher, _revitTaskHandler);
 
             AgregarMensaje("¡Hola! Soy tu asistente de Revit. ¿Qué quieres hacer hoy?",
                            "🤖 IA", "#313244", "#CDD6F4", "Left");

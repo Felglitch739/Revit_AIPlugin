@@ -50,5 +50,26 @@ namespace RevitAIPlugin.UI
             Description = "Coloca una ventana en una coordenada X e Y sobre los muros perimetrales. Las coordenadas deben caer exactamente sobre los ejes perimetrales (ej. X=ancho/2, Y=0 para pared inferior).",
             JsonSchema = "{\"type\":\"object\",\"properties\":{\"tipoVentana\":{\"type\":\"string\",\"description\":\"Tipo o nombre de la ventana (ej. 'Fixed', 'Operable', 'Glass')\"},\"x\":{\"type\":\"number\",\"description\":\"Coordenada X en metros sobre el muro\"},\"y\":{\"type\":\"number\",\"description\":\"Coordenada Y en metros sobre el muro\"}},\"required\":[\"x\",\"y\"]}"
         };
+
+        public static readonly ToolDefinition CrearColumna = new()
+        {
+            Name = "CrearColumna",
+            Description = "Crea una columna estructural en una coordenada X e Y específica en el modelo. Parámetros: nivel (string opcional), x (double en metros), y (double en metros), altura (double en metros), tipoColumna (string opcional).",
+            JsonSchema = "{\"type\":\"object\",\"properties\":{\"nivel\":{\"type\":\"string\",\"description\":\"Nombre del nivel, ej. 'Level 1'\"},\"x\":{\"type\":\"number\",\"description\":\"Coordenada X en metros\"},\"y\":{\"type\":\"number\",\"description\":\"Coordenada Y en metros\"},\"altura\":{\"type\":\"number\",\"description\":\"Altura de la columna en metros\"},\"tipoColumna\":{\"type\":\"string\",\"description\":\"Tipo o nombre de la columna\"}},\"required\":[\"x\",\"y\"]}"
+        };
+
+        public static readonly ToolDefinition CrearViga = new()
+        {
+            Name = "CrearViga",
+            Description = "Crea una viga estructural entre dos puntos. Parámetros: nivel (string opcional), x1/y1 (punto inicio), x2/y2 (punto fin), tipoViga (string opcional).",
+            JsonSchema = "{\"type\":\"object\",\"properties\":{\"nivel\":{\"type\":\"string\",\"description\":\"Nombre del nivel, ej. 'Level 1'\"},\"x1\":{\"type\":\"number\",\"description\":\"Coordenada X inicial en metros\"},\"y1\":{\"type\":\"number\",\"description\":\"Coordenada Y inicial en metros\"},\"x2\":{\"type\":\"number\",\"description\":\"Coordenada X final en metros\"},\"y2\":{\"type\":\"number\",\"description\":\"Coordenada Y final en metros\"},\"tipoViga\":{\"type\":\"string\",\"description\":\"Tipo o nombre de la viga\"}},\"required\":[\"x1\",\"y1\",\"x2\",\"y2\"]}"
+        };
+
+        public static readonly ToolDefinition CrearTecho = new()
+        {
+            Name = "CrearTecho",
+            Description = "Crea un techo en el modelo basado en los muros del nivel especificado. Parámetros: nivel (string), tipoTecho (string opcional).",
+            JsonSchema = "{\"type\":\"object\",\"properties\":{\"nivel\":{\"type\":\"string\",\"description\":\"Nombre del nivel, ej. 'Level 1'\"},\"tipoTecho\":{\"type\":\"string\",\"description\":\"Tipo o nombre del techo\"}},\"required\":[\"nivel\"]}"
+        };
     }
 }

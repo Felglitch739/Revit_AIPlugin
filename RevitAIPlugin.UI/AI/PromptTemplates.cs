@@ -61,6 +61,12 @@ namespace RevitAIPlugin.UI
                   * Windows: Placed at 1.0m-2.0m height equivalents and spread across walls for natural light
                   * Separate doors and windows by at least 0.5 meters to avoid overlap
 
+                === FOLLOW-UP ROOM MODIFICATION RULES ===
+                - If a room was already created earlier in this conversation using CrearHabitacionEstructurada, DO NOT call CrearHabitacionEstructurada again to add or modify elements inside that room. Never recreate or duplicate walls for the same logical room.
+                - For additions or modifications inside an existing room, ONLY use ColocarMobiliario, ColocarPuerta or ColocarVentana and reuse the previously established room dimensions ('ancho' and 'largo').
+                - Maintain coordinates relative to the original room origin (0,0) used when the room was first created. Do not re-center, shift, or reinterpret coordinates as global positions.
+                - If the conversation context does not clearly indicate the target room or its dimensions, ask one concise clarifying question before calling any tool.
+
                 === EXECUTION BEHAVIOR ===
                 - If the user request implies modeling, you MUST exclusively generate the JSON array of tool calls. Do not explain the code beforehand.
                 - If a specific required parameter is missing and cannot be logically inferred procedurally, ask the user concisely.
@@ -72,7 +78,10 @@ namespace RevitAIPlugin.UI
         {
             return """
                 Selecciona la herramienta correcta solo cuando la solicitud implique leer, consultar, contar o crear elementos en Revit.
-                Usa CrearMuro para muros aislados, CrearHabitacionEstructurada para estancias rectangulares con cuatro muros, ColocarMobiliario para insertar muebles.
+                Usa CrearMuro para muros aislados, CrearHabitacionEstructurada para estancias rectangulares con cuatro muros.
+                Usa CrearColumna para crear columnas estructurales, CrearViga para crear vigas entre dos puntos.
+                Usa CrearTecho para crear techos en un nivel específico.
+                Usa ColocarMobiliario para insertar muebles.
                 Usa ColocarPuerta para puertas (sobre muros perimetrales) y ColocarVentana para ventanas (sobre muros perimetrales).
                 Usa los parámetros mínimos necesarios, sin inventar valores salvo que sea seguro hacerlo.
                 Si la intención del usuario es solo informativa, responde sin usar herramientas.
