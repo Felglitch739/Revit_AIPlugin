@@ -33,8 +33,8 @@ namespace RevitAIPlugin.UI
         public static readonly ToolDefinition ColocarMobiliario = new()
         {
             Name = "ColocarMobiliario",
-            Description = "Coloca un elemento de mobiliario (cama, escritorio, silla) en una coordenada X e Y específica dentro de la habitación.",
-            JsonSchema = "{\"type\":\"object\",\"properties\":{\"tipoMueble\":{\"type\":\"string\",\"description\":\"Tipo o nombre del mueble (ej. 'Cama', 'Silla', 'Escritorio')\"},\"x\":{\"type\":\"number\",\"description\":\"Coordenada X en metros relativa al centro de la habitación\"},\"y\":{\"type\":\"number\",\"description\":\"Coordenada Y en metros relativa al centro de la habitación\"}},\"required\":[\"tipoMueble\",\"x\",\"y\"]}"
+            Description = "Coloca mobiliario en una coordenada X e Y específica. Para camas, usa exactamente 'bed-standard', 'bed-shaker' o 'bed-box' si están cargadas en el proyecto.",
+            JsonSchema = "{\"type\":\"object\",\"properties\":{\"tipoMueble\":{\"type\":\"string\",\"description\":\"Nombre exacto de la familia cargada en el proyecto (por ejemplo: 'bed-standard', 'bed-shaker', 'bed-box')\"},\"x\":{\"type\":\"number\",\"description\":\"Coordenada X en metros relativa al centro de la habitación\"},\"y\":{\"type\":\"number\",\"description\":\"Coordenada Y en metros relativa al centro de la habitación\"}},\"required\":[\"tipoMueble\",\"x\",\"y\"]}"
         };
 
         public static readonly ToolDefinition ColocarPuerta = new()

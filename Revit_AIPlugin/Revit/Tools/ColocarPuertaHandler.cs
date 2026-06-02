@@ -79,11 +79,11 @@ namespace RevitAIPlugin.Revit.Tools
             }
             catch (Exception ex)
             {
-                Resultado = $"Error: {ex.Message}";
+                Resultado = $"ERROR: {ex.Message}";
             }
             finally
             {
-                TaskCompletionSource?.TrySetResult(Resultado ?? "Error: Sin respuesta.");
+                TaskCompletionSource?.TrySetResult(Resultado ?? "ERROR: Sin respuesta.");
                 TaskCompletionSource = null;
             }
         }

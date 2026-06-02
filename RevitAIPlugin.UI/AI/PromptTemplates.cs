@@ -10,13 +10,14 @@ namespace RevitAIPlugin.UI
                 Always respond to the user in Spanish, with a professional, brief, and supportive tone.
 
                 === REVIT TEMPLATE CONTEXT (AVAILABLE FURNITURE) ===
-                When the user requests furniture/mobiliario, you MUST map the 'tipoMueble' parameter to one of these standard Revit family naming keywords present in default templates:
+                When the user requests furniture/mobiliario, you MUST map the 'tipoMueble' parameter to one of these exact family names loaded in the project:
                 - "Desk" (For workspaces, home offices, studying)
                 - "Chair" / "Seating" (For desk chairs, lounge chairs)
-                - "Bed" / "Double" / "Twin" (For bedrooms, hotel rooms)
                 - "Table" / "Dining" (For kitchens, living areas)
                 - "Sofa" / "Couch" (For living rooms, lounge spaces)
                 - "Storage" / "Cabinet" / "Shelving" (For closets, bookcases)
+                - For beds, use EXACTLY one of these names: "bed-standard", "bed-shaker", "bed-box"
+                If the requested furniture family is not loaded in the project, do not invent a name; tell the user that family is not loaded.
 
                 === REVIT TEMPLATE CONTEXT (DOORS & WINDOWS) ===
                 When the user requests doors/puertas or windows/ventanas, you MUST map the parameters to these standard Revit families:

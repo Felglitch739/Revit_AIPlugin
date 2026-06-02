@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -26,6 +27,7 @@ namespace RevitAIPlugin.UI
         private readonly IChatCompletionService? _chatService;
         private readonly IToolExecutor? _toolExecutor;
         private readonly RevitTaskHandler _revitTaskHandler;
+        private int _indiceMensajeProgreso = -1;
 
         private static string BuildSystemPrompt() => PromptTemplates.BuildSystemPrompt();
 
@@ -110,7 +112,8 @@ namespace RevitAIPlugin.UI
             AgregarMensaje(userText, "👤 Tú", "#45475A", "#CDD6F4", "Right");
             txtInput.Text = string.Empty;
             btnEnviar.IsEnabled = false;
-            AgregarMensaje("...", "🤖 IA", "#313244", "#6C7086", "Left");
+            AgregarMensaje("⏳ Preparando ejecución...", "🤖 IA", "#313244", "#6C7086", "Left");
+            _indiceMensajeProgreso = _messages.Count - 1;
 
             try
             {
@@ -121,20 +124,22 @@ namespace RevitAIPlugin.UI
                         ? "No he podido generar una respuesta útil en este momento."
                         : completion.Content;
 
-                if (_messages.Count > 0)
+                if (_indiceMensajeProgreso >= 0 && _indiceMensajeProgreso < _messages.Count)
                 {
-                    _messages.RemoveAt(_messages.Count - 1);
+                    _messages.RemoveAt(_indiceMensajeProgreso);
                 }
 
+                _indiceMensajeProgreso = -1;
                 AgregarMensaje(respuestaFinal, "🤖 IA", "#313244", "#CDD6F4", "Left");
             }
             catch (Exception ex)
             {
-                if (_messages.Count > 0)
+                if (_indiceMensajeProgreso >= 0 && _indiceMensajeProgreso < _messages.Count)
                 {
-                    _messages.RemoveAt(_messages.Count - 1);
+                    _messages.RemoveAt(_indiceMensajeProgreso);
                 }
 
+                _indiceMensajeProgreso = -1;
                 AgregarMensaje($"Error: {ex.Message}", "⚠️ Sistema", "#45475A", "#F38BA8", "Left");
             }
             finally
@@ -151,17 +156,24 @@ namespace RevitAIPlugin.UI
             }
 
             var resumenHerramientas = new System.Text.StringBuilder();
+            var totalPorHerramienta = CalcularTotalPorHerramienta(completion.ToolCalls);
+            var ejecutadasPorHerramienta = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             foreach (GroqToolCall toolCall in completion.ToolCalls)
             {
                 try
                 {
-                    // Ejecutamos cada llamada y añadimos un pequeño retardo entre llamadas para evitar solapamiento de transacciones
+                    int ejecutadaActual = ejecutadasPorHerramienta.TryGetValue(toolCall.Name, out int actual) ? actual + 1 : 1;
+                    ejecutadasPorHerramienta[toolCall.Name] = ejecutadaActual;
+                    int total = totalPorHerramienta.TryGetValue(toolCall.Name, out int totalTool) ? totalTool : 1;
+
+                    ActualizarMensajeProgreso(CrearTextoProgreso(toolCall, ejecutadaActual, total));
+
                     string toolResult = await _toolExecutor.ExecuteAsync(toolCall);
                     resumenHerramientas.AppendLine(toolResult);
                     resumenHerramientas.AppendLine();
 
-                    await Task.Delay(300); // 300ms entre cada ejecución
+                    await Task.Delay(180);
                 }
                 catch (Exception ex)
                 {
@@ -169,6 +181,8 @@ namespace RevitAIPlugin.UI
                     resumenHerramientas.AppendLine();
                 }
             }
+
+            ActualizarMensajeProgreso("✅ Listo!");
 
             string toolResultCombined = resumenHerramientas.ToString().Trim();
             if (string.IsNullOrWhiteSpace(toolResultCombined))
@@ -180,6 +194,88 @@ namespace RevitAIPlugin.UI
             return string.IsNullOrWhiteSpace(naturalResponse)
                 ? toolResultCombined
                 : naturalResponse;
+        }
+
+        private Dictionary<string, int> CalcularTotalPorHerramienta(IReadOnlyList<GroqToolCall> toolCalls)
+        {
+            var resultado = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var call in toolCalls)
+            {
+                resultado[call.Name] = resultado.TryGetValue(call.Name, out int total) ? total + 1 : 1;
+            }
+
+            return resultado;
+        }
+
+        private void ActualizarMensajeProgreso(string texto)
+        {
+            if (_indiceMensajeProgreso < 0 || _indiceMensajeProgreso >= _messages.Count)
+            {
+                return;
+            }
+
+            _messages[_indiceMensajeProgreso] = new ChatMessage
+            {
+                Text = texto,
+                Sender = "🤖 IA",
+                Background = "#313244",
+                TextColor = "#89B4FA",
+                Alignment = "Left"
+            };
+            scrollViewer.ScrollToEnd();
+        }
+
+        private string CrearTextoProgreso(GroqToolCall toolCall, int indiceActual, int total)
+        {
+            using var doc = string.IsNullOrWhiteSpace(toolCall.ArgumentsJson)
+                ? null
+                : JsonDocument.Parse(toolCall.ArgumentsJson);
+
+            JsonElement root = doc?.RootElement ?? default;
+
+            return toolCall.Name switch
+            {
+                "CrearHabitacionEstructurada" => $"🏠 Creando habitación {ObtenerDouble(root, "ancho"):0.##}x{ObtenerDouble(root, "largo"):0.##}m...",
+                "ColocarVentana" => $"🪟 Colocando ventana {indiceActual} de {total}...",
+                "ColocarPuerta" => $"🚪 Colocando puerta {indiceActual} de {total}...",
+                "ColocarMobiliario" => $"🛏 Colocando {NormalizarMueble(ObtenerString(root, "tipoMueble"))}...",
+                "CrearMuro" => "🧱 Creando muro...",
+                "LeerElementos" => "🔎 Leyendo elementos...",
+                "CrearColumna" => "🏗️ Creando columna...",
+                "CrearViga" => "🏗️ Creando viga...",
+                "CrearTecho" => "🏠 Creando techo...",
+                _ => $"⚙️ Ejecutando {toolCall.Name}..."
+            };
+        }
+
+        private static string ObtenerString(JsonElement root, string propertyName)
+        {
+            return root.ValueKind != JsonValueKind.Undefined && root.TryGetProperty(propertyName, out JsonElement value)
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+        }
+
+        private static double ObtenerDouble(JsonElement root, string propertyName)
+        {
+            return root.ValueKind != JsonValueKind.Undefined && root.TryGetProperty(propertyName, out JsonElement value) && value.TryGetDouble(out double numero)
+                ? numero
+                : 0;
+        }
+
+        private static string NormalizarMueble(string tipoMueble)
+        {
+            if (string.IsNullOrWhiteSpace(tipoMueble))
+            {
+                return "mobiliario";
+            }
+
+            return tipoMueble.Trim().ToLowerInvariant() switch
+            {
+                "bed-standard" => "cama standard",
+                "bed-shaker" => "cama shaker",
+                "bed-box" => "cama box",
+                _ => tipoMueble
+            };
         }
     }
 }
